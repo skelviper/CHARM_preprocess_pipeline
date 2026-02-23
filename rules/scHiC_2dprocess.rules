@@ -1,0 +1,171 @@
+BWA_MAP_THREADS = max(
+    config["resources"]["bwa_cpu_threads"] + config["resources"]["bwa_map_sort_threads"],
+    config["resources"]["bwa_map_index_threads"],
+)
+
+rule bwa_map:
+    input:
+        ref_genome=config["refs"][config["ref_genome"]]["bwa_mem2_index"],
+        DNA1="processed/{sample}/DNA/{sample}.dna.clean.R1.fq.gz",
+        DNA2="processed/{sample}/DNA/{sample}.dna.clean.R2.fq.gz",
+    output:
+        bam = "processed/{sample}/mapping/{sample}.sort.bam",
+        bamidx = "processed/{sample}/mapping/{sample}.sort.bam.bai"
+    threads: BWA_MAP_THREADS
+    params:
+        extra=r"-R '@RG\tID:{sample}\tPL:ILLUMINA\tSM:{sample}'",
+        bwa_threads=config["resources"]["bwa_cpu_threads"],
+        sort_threads=config["resources"]["bwa_map_sort_threads"],
+        index_threads=config["resources"]["bwa_map_index_threads"],
+
+    shell:"""
+
+        bwa-mem2 mem -5SP -t{params.bwa_threads} {params.extra} {input.ref_genome} {input.DNA1} {input.DNA2} | samtools sort -@{params.sort_threads} -o {output.bam} -
+        samtools index -@{params.index_threads} {output.bam} {output.bamidx}
+
+        """
+
+rule align2pairs:
+    input:
+        snp_file = config["refs"][config["ref_genome"]]["snp"],
+        par_file = config["refs"][config["ref_genome"]]["par"],
+        bam = rules.bwa_map.output.bam
+    output:
+        contacts_seg = "processed/{sample}/2d_info/contacts.seg.gz",
+    params:
+        yperx_threshold = config["yperx_threshold"],
+        if_snp = config["if_snp"],
+        if_ht = config["if_ht"],
+    log:
+        contacts_seg_log = "processed/{sample}/2d_info/contacts.seg.log",
+        raw_pairs_log = "processed/{sample}/2d_info/raw.pairs.log",
+        contacts_pairs_log = "processed/{sample}/2d_info/contacts.pairs.log",
+        yperx = "processed/{sample}/2d_info/{sample}.yperx.txt",
+    threads: config["resources"]["align2pairs_cpu_threads"],
+    resources:
+        mem_mb = config["resources"]["align2pairs_mem_mb"],
+
+    shell: """
+        export PATH={SCRIPTS_DIR}:$PATH
+        
+        # decide sex
+        if_snp={params.if_snp}
+        if_ht={params.if_ht}
+        yperx=`awk 'BEGIN{{printf "%.6f",('$(samtools view -q 30 {input.bam} chrY |wc -l)'/'$(samtools view -q 30 {input.bam} chrX | wc -l)')}}'`
+        echo $yperx > {log.yperx}
+
+        if [ $if_snp == "True" ]
+        then
+            if [ $yperx \> {params.yperx_threshold} ]
+            then
+                samtools view -h {input.bam} | samtools sort -n -@{threads} | samtools view -h | {SCRIPTS_DIR}/hickit.js sam2seg  -v {input.snp_file} - 2> {log.contacts_seg_log} |
+        {SCRIPTS_DIR}/hickit.js chronly - | {SCRIPTS_DIR}/hickit.js bedflt {input.par_file} - | (if [ $if_ht == "False" ]; then sed 's/-/+/g'; else cat; fi) | gzip > {output.contacts_seg}
+            else
+                samtools view -h {input.bam} | samtools sort -n -@{threads} | samtools view -h | {SCRIPTS_DIR}/hickit.js sam2seg -v {input.snp_file} - 2> {log.contacts_seg_log} | {SCRIPTS_DIR}/hickit.js chronly -y - | (if [ $if_ht == "False" ]; then sed 's/-/+/g'; else cat; fi) | gzip > {output.contacts_seg}
+            fi
+        else
+            if [ $yperx \> {params.yperx_threshold} ]
+            then
+                samtools view -h {input.bam} | samtools sort -n -@{threads} | samtools view -h | {SCRIPTS_DIR}/hickit.js sam2seg  - 2> {log.contacts_seg_log} |
+            {SCRIPTS_DIR}/hickit.js chronly - | (if [ $if_ht == "False" ]; then sed 's/-/+/g'; else cat; fi) | gzip > {output.contacts_seg}
+            else
+                samtools view -h {input.bam} | samtools sort -n -@{threads} | samtools view -h | {SCRIPTS_DIR}/hickit.js sam2seg - 2> {log.contacts_seg_log} | {SCRIPTS_DIR}/hickit.js chronly -y - | (if [ $if_ht == "False" ]; then sed 's/-/+/g'; else cat; fi) | gzip > {output.contacts_seg}
+            fi
+        fi
+    """
+
+rule seg2pairs:
+    input:
+        contacts_seg = rules.align2pairs.output.contacts_seg,
+    output:
+        raw_pairs = "processed/{sample}/2d_info/raw.pairs.gz",
+        contacts_pairs = "processed/{sample}/2d_info/contacts.pairs.gz",
+    params:
+        if_ht = config["if_ht"],
+    log:
+        raw_pairs_log = "processed/{sample}/2d_info/raw.pairs.log",
+        contacts_pairs_log = "processed/{sample}/2d_info/contacts.pairs.log",
+
+    shell:"""
+        if_ht={params.if_ht}
+        #generate raw.pairs.gz for statistics
+        {SCRIPTS_DIR}/hickit --dup-dist=0 -i {input.contacts_seg} -o - 2> {log.raw_pairs_log} | gzip > {output.raw_pairs}
+        #generate deduped pairs
+        if [ $if_ht == "False" ]
+        then
+            {SCRIPTS_DIR}/hickit --dup-dist=500 -i {input.contacts_seg} -o - 2> {log.contacts_pairs_log} | gzip > {output.contacts_pairs}
+        else
+            {SCRIPTS_DIR}/hickit --dup-dist=1 -i {input.contacts_seg} -o - 2> {log.contacts_pairs_log} | gzip > {output.contacts_pairs}
+        fi
+
+    """
+
+#clean premiscus legs and isolatied contacts
+rule cleanPairs:
+    input: 
+        contacts_pairs = rules.seg2pairs.output.contacts_pairs,
+    output: 
+        clean1_pairs= "result/cleaned_pairs/c1/{sample}.pairs.gz",
+        clean12_pairs = "result/cleaned_pairs/c12/{sample}.pairs.gz",
+        clean123_pairs = "result/cleaned_pairs/c123/{sample}.pairs.gz",
+    threads: config["resources"]["hires_clean_cpu_threads"]
+    params:
+        ref_annotation = config["refs"][config["ref_genome"]]["annotations"],
+        ref_genome = config["ref_genome"],
+    shell:"""
+        mkdir -p result/cleaned_pairs/c1
+        mkdir -p result/cleaned_pairs/c12
+        mkdir -p result/cleaned_pairs/c123
+
+        export PYTHONPATH={CHARMTOOLS_PYTHONPATH}:${{PYTHONPATH:-}}
+        if zcat -f {input.contacts_pairs} 2>/dev/null | awk '$0!~/^#/ {{ok=1}} END{{exit ok?0:1}}'; then
+            if ! (python -m CHARMtools clean_leg -t {threads} {input.contacts_pairs} -o {output.clean1_pairs} && \
+                  python -m CHARMtools clean_isolated -t {threads} -o {output.clean12_pairs} {output.clean1_pairs} && \
+                  python -m CHARMtools clean_splicing {output.clean12_pairs} -r {params.ref_annotation} -o {output.clean123_pairs} -t {threads}); then
+                echo "WARN: cleanPairs failed for {wildcards.sample}, writing empty outputs" >&2
+                : | gzip > {output.clean1_pairs}
+                : | gzip > {output.clean12_pairs}
+                : | gzip > {output.clean123_pairs}
+            fi
+        else
+            echo "WARN: empty contacts pairs for {wildcards.sample}, writing empty outputs" >&2
+            : | gzip > {output.clean1_pairs}
+            : | gzip > {output.clean12_pairs}
+            : | gzip > {output.clean123_pairs}
+        fi
+
+
+    """
+
+
+rule hickit_2d:
+    input:
+        cleaned_pairs = rules.cleanPairs.output.clean123_pairs,
+    output:
+        impute_pairs = "result/impute/pairs/{sample}.impute.pairs.gz",
+        impute_val = "result/impute/val/{sample}.impute.val",
+    log:
+        impute_pairs_log = "processed/{sample}/2d_info/{sample}.impute.pairs.log",
+        impute_val_log = "processed/{sample}/2d_info/{sample}.impute.val.log",
+
+    shell:"""
+        mkdir -p result/impute/pairs result/impute/val processed/{wildcards.sample}/2d_info
+
+        if zcat -f {input.cleaned_pairs} 2>/dev/null | awk '$0!~/^#/ {{ok=1}} END{{exit ok?0:1}}'; then
+            #impute phases
+            if ! (set -o pipefail; {SCRIPTS_DIR}/hickit -i {input.cleaned_pairs} -u -o - 2> {log.impute_pairs_log} | bgzip > {output.impute_pairs}); then
+                echo "WARN: hickit impute failed for {wildcards.sample}, writing empty impute pairs" >&2
+                : | bgzip > {output.impute_pairs}
+            fi
+            # estimate imputation accuracy by holdout
+            if ! {SCRIPTS_DIR}/hickit -i {input.cleaned_pairs} --out-val={output.impute_val} 2> {log.impute_val_log}; then
+                echo "WARN: hickit val failed for {wildcards.sample}, writing empty impute val" >&2
+                : > {output.impute_val}
+            fi
+        else
+            echo "WARN: empty cleaned pairs for {wildcards.sample}, writing empty impute outputs" >&2
+            : | bgzip > {output.impute_pairs}
+            : > {output.impute_val}
+        fi
+
+        """

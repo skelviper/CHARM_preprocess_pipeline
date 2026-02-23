@@ -1,0 +1,73 @@
+import os
+
+def _pick_raw_read(wildcards, mate):
+    base = f"Rawdata/{wildcards.sample}/{wildcards.sample}"
+    candidates = [f"{base}_{mate}.fq.gz", f"{base}_R{mate}.fq.gz"]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
+
+rule multiSplit:
+    input:
+        read1=lambda wildcards: _pick_raw_read(wildcards, "1"),
+        read2=lambda wildcards: _pick_raw_read(wildcards, "2"),
+    output: 
+        split_R1="processed/{sample}/{split}/{sample}.{split}.R1.fq.gz",
+        split_R2="processed/{sample}/{split}/{sample}.{split}.R2.fq.gz",
+    threads: config["resources"]["cutadapt_cpu_threads"]
+    params:
+        adapter=lambda wildcards: config["split"][wildcards.split]
+    shell:"""
+        mkdir -p processed/{wildcards.sample}/{wildcards.split}
+        cutadapt -G '{params.adapter}' -j {threads} --untrimmed-output /dev/null --untrimmed-paired-output /dev/null -o {output.split_R1} -p {output.split_R2} {input.read1} {input.read2}
+        """
+
+rule split:
+    input:
+        read1=lambda wildcards: _pick_raw_read(wildcards, "1"),
+        read2=lambda wildcards: _pick_raw_read(wildcards, "2"),
+    output: 
+        DNA_R1=temp("processed/{sample}/DNA/{sample}.dna.R1.fq.gz"),
+        DNA_R2=temp("processed/{sample}/DNA/{sample}.dna.R2.fq.gz"),
+        RNA_R1=temp("processed/{sample}/RNA/{sample}.rna.R1.fq.gz"),
+        RNA_R2=temp("processed/{sample}/RNA/{sample}.rna.R2.fq.gz"),
+    threads: config["resources"]["cutadapt_cpu_threads"]
+    params:
+        adapter=r"XGGTTGAGGTAGTATTGCGCAATG;o=20"
+    shell:"""
+        cutadapt -G '{params.adapter}' -j {threads} --untrimmed-output {output.DNA_R1} --untrimmed-paired-output {output.DNA_R2} -o {output.RNA_R1} -p {output.RNA_R2} {input.read1} {input.read2}
+
+        """
+
+# get rid of the ATAC/CT adaptors in the DNA data
+rule cutRound2_DNA:
+    input:
+        DNA_R1="processed/{sample}/DNA/{sample}.dna.R1.fq.gz",
+        DNA_R2="processed/{sample}/DNA/{sample}.dna.R2.fq.gz",
+    output:
+        trimmed_DNA_R1="processed/{sample}/DNA/{sample}.dna.clean.R1.fq.gz",
+        trimmed_DNA_R2="processed/{sample}/DNA/{sample}.dna.clean.R2.fq.gz",
+    threads: config["resources"]["cutadapt_cpu_threads"]
+    params:
+        adapters=lambda wildcards: " ".join([f"-G '{config['split'][key]}'" for key in config["split"]])
+    shell:"""
+
+        cutadapt {params.adapters} -j {threads} -o {output.trimmed_DNA_R1} -p {output.trimmed_DNA_R2} {input.DNA_R1} {input.DNA_R2}
+
+        """
+
+#cutRound2 is for minimize genome contamination in RNA data, probably from exonuclease activity of reverse transcriptase
+rule cutRound2_RNA:
+    input:
+        RNA_R1="processed/{sample}/RNA/{sample}.rna.R1.fq.gz",
+        RNA_R2="processed/{sample}/RNA/{sample}.rna.R2.fq.gz"
+    output: 
+        RNA_R1="processed/{sample}/RNA/{sample}.rna.clean.R1.fq.gz",
+        RNA_R2="processed/{sample}/RNA/{sample}.rna.clean.R2.fq.gz",
+    threads: config["resources"]["cutadapt_cpu_threads"]
+    params:
+        adapter=r"XNNNNNNNNTTTTTTTTTTTTTTT;o=18"
+    shell:"""
+        cutadapt --action=none --discard-untrimmed -G '{params.adapter}' -j {threads} -o {output.RNA_R1} -p {output.RNA_R2} {input}
+        """
