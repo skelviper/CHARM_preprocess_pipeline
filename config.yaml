@@ -2,10 +2,10 @@ if_snp: True
 if_ht: False
 if_structure: True
 if_RNA_snp_split: False
-if_charm: True
+if_charm: False
 relaxed_rule_all: false
-# work_dir: /mnt/ssd/zliu/run_charm/charm_test/charm_test_13/
-work_dir: /mnt/ssd/zliu/run_charm/charm_old/
+work_dir: /work/run_hires/data1/
+format: bgi # illumina or bgi
 
 
 ref_genome: GRCm38  

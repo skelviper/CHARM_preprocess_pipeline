@@ -88,14 +88,23 @@ rule seg2pairs:
 
     shell:"""
         if_ht={params.if_ht}
-        #generate raw.pairs.gz for statistics
-        {SCRIPTS_DIR}/hickit --dup-dist=0 -i {input.contacts_seg} -o - 2> {log.raw_pairs_log} | gzip > {output.raw_pairs}
-        #generate deduped pairs
-        if [ $if_ht == "False" ]
-        then
-            {SCRIPTS_DIR}/hickit --dup-dist=500 -i {input.contacts_seg} -o - 2> {log.contacts_pairs_log} | gzip > {output.contacts_pairs}
+        # check if seg file has actual data (not just chromosome headers)
+        if zcat -f {input.contacts_seg} 2>/dev/null | awk '$0!~/^#/ {{ok=1}} END{{exit ok?0:1}}'; then
+            #generate raw.pairs.gz for statistics
+            {SCRIPTS_DIR}/hickit --dup-dist=0 -i {input.contacts_seg} -o - 2> {log.raw_pairs_log} | gzip > {output.raw_pairs}
+            #generate deduped pairs
+            if [ $if_ht == "False" ]
+            then
+                {SCRIPTS_DIR}/hickit --dup-dist=500 -i {input.contacts_seg} -o - 2> {log.contacts_pairs_log} | gzip > {output.contacts_pairs}
+            else
+                {SCRIPTS_DIR}/hickit --dup-dist=1 -i {input.contacts_seg} -o - 2> {log.contacts_pairs_log} | gzip > {output.contacts_pairs}
+            fi
         else
-            {SCRIPTS_DIR}/hickit --dup-dist=1 -i {input.contacts_seg} -o - 2> {log.contacts_pairs_log} | gzip > {output.contacts_pairs}
+            echo "WARN: empty seg file for {wildcards.sample}, writing empty pairs" >&2
+            echo "WARN: empty seg file for {wildcards.sample}" > {log.raw_pairs_log}
+            echo "WARN: empty seg file for {wildcards.sample}" > {log.contacts_pairs_log}
+            : | gzip > {output.raw_pairs}
+            : | gzip > {output.contacts_pairs}
         fi
 
     """
