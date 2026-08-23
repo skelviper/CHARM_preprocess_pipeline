@@ -1,8 +1,8 @@
 rule R2_mapping:
     input:
         ref_genome=config["refs"][config["ref_genome"]]["bwa_mem2_index"],
-        R1 = rules.multiSplit.output.split_R1,
-        R2 = rules.multiSplit.output.split_R2,
+        R1 = "processed/{sample}/{split}/{sample}.{split}.R1.fq.gz",
+        R2 = "processed/{sample}/{split}/{sample}.{split}.R2.fq.gz",
     output:
         sortbam = "processed/{sample}/{split}/{sample}.sort.bam"
     threads: config["resources"]["cuttag_bwa_threads"] + config["resources"]["cuttag_sort_threads"]
@@ -10,42 +10,91 @@ rule R2_mapping:
         bwa_threads = config["resources"]["cuttag_bwa_threads"],
         sort_threads = config["resources"]["cuttag_sort_threads"]
     shell:"""
-        set -o pipefail
-        bwa-mem2 mem -5SP -t{params.bwa_threads} {input.ref_genome} {input.R1} {input.R2} | samtools sort -@{params.sort_threads} -o {output.sortbam} - || \
-        {{ echo "WARN: R2_mapping failed for {wildcards.sample}.{wildcards.split}, writing empty bam" >&2; : > {output.sortbam}; }}
+        set -euo pipefail
+        bwa-mem2 mem -5SP -t{params.bwa_threads} \
+          {input.ref_genome} {input.R1} {input.R2} | \
+          samtools sort -@{params.sort_threads} -o {output.sortbam} -
+    """
 
+rule build_cuttag_phased_snp_index:
+    input:
+        snp_file = config["refs"][config["ref_genome"]]["snp"],
+        builder = os.path.join(SCRIPTS_DIR, "build_phased_snp_index.py"),
+        selector_core = os.path.join(SCRIPTS_DIR, "r2_fragment_selector_core.py"),
+    output:
+        index_dir = temp(directory("tmp/phased_snp_index")),
+    params:
+        manifest = "tmp/phased_snp_index/manifest.tsv",
+    shell:"""
+        set -euo pipefail
+        python {input.builder} \
+          --input {input.snp_file} \
+          --output {params.manifest}
     """
 
 rule bam2bed:
     input:
         sortbam = rules.R2_mapping.output.sortbam,
-        snp_file = config["refs"][config["ref_genome"]]["snp"]
+        snp_index_dir = rules.build_cuttag_phased_snp_index.output.index_dir,
+        selector = os.path.join(SCRIPTS_DIR, "select_r2_5prime_unclipped.py"),
+        selector_core = os.path.join(SCRIPTS_DIR, "r2_fragment_selector_core.py"),
     output:
-        R2_bed = "processed/{sample}/{split}/{sample}.{split}.R2_5.bed.gz",
+        R2_bed = "processed/{sample}/{split}/{sample}.{split}.R2_5.unclipped.bed.gz",
+        phase = "processed/{sample}/{split}/{sample}.{split}.R2_5.unclipped.phase.tsv.gz",
+        stats = "processed/{sample}/{split}/{sample}.{split}.R2_5.unclipped.selection.tsv",
+    log:
+        main = "processed/{sample}/{split}/{sample}.{split}.R2_5.unclipped.log",
     threads: config["resources"]["cuttag_bam2bed_sort_threads"]
+    params:
+        min_mapq = config["cuttag_fragments"]["min_mapq"],
+        min_baseq = config["cuttag_fragments"]["min_baseq"],
+        temp_root = config["cuttag_fragments"]["temp_root"],
+        phase_batch_qnames = config["resources"]["cuttag_phase_batch_qnames"],
+        snp_index = "tmp/phased_snp_index/manifest.tsv",
     shell:"""
-        export PATH={SCRIPTS_DIR}:$PATH
-        if [ ! -s {input.sortbam} ]; then
-            : | gzip > {output.R2_bed}
-        else
-            set -o pipefail
-            samtools view -h {input.sortbam} | samtools sort -n -@{threads} | samtools view - | {SCRIPTS_DIR}/hickit.js sam2seg -d 0 -v {input.snp_file} - | \
-            python {SCRIPTS_DIR}/seg2bed.py - - | gzip > {output.R2_bed} || {{ : | gzip > {output.R2_bed}; }}
-        fi
-
+        set -euo pipefail
+        python {input.selector} \
+          --sample {wildcards.sample} \
+          --split {wildcards.split} \
+          --bam {input.sortbam} \
+          --backend python \
+          --snp-index {params.snp_index} \
+          --output {output.R2_bed} \
+          --phase-output {output.phase} \
+          --stats {output.stats} \
+          --log {log.main} \
+          --threads {threads} \
+          --temp-root {params.temp_root} \
+          --min-mapq {params.min_mapq} \
+          --min-baseq {params.min_baseq} \
+          --python-batch-qnames {params.phase_batch_qnames}
+        test -s {output.stats}
     """
 
 rule generate_dedup_fragments:
     input:
         R2_bed = rules.bam2bed.output.R2_bed,
+        wrapper = os.path.join(SCRIPTS_DIR, "run_fragment_dedup.py"),
+        dedup_script = os.path.join(SCRIPTS_DIR, "dedup_bed.py"),
     output:
         fragments = "processed/{split}_all/{sample}.{split}.frag.bed.gz",
-    log: "processed/{split}_all/{sample}.{split}.frag.log",
+        stats = "processed/{split}_all/{sample}.{split}.frag.tsv",
+    log:
+        main = "processed/{split}_all/{sample}.{split}.frag.log",
+    params:
+        eps = config["cuttag_fragments"]["endpoint_dedup_eps_bp"],
     shell:"""
-        
-        python {SCRIPTS_DIR}/dedup_bed.py -i {input.R2_bed} -o {output.fragments} -t normal > {log} || \
-        {{ echo "WARN: generate_dedup_fragments failed for {wildcards.sample}.{wildcards.split}, writing empty fragments" >> {log}; : | gzip > {output.fragments}; }}
-
+        set -euo pipefail
+        python {input.wrapper} \
+          --sample {wildcards.sample} \
+          --split {wildcards.split} \
+          --input {input.R2_bed} \
+          --output {output.fragments} \
+          --production-script {input.dedup_script} \
+          --stats {output.stats} \
+          --log {log.main} \
+          --eps {params.eps}
+        test -s {output.stats}
     """
 
 rule foramt_fragmenets:
@@ -54,11 +103,10 @@ rule foramt_fragmenets:
     output:
         format_fragments = "processed/{split}_all/{sample}.{split}.format_frag.bed.gz"
     shell:"""
-
-        set -o pipefail
-        zcat {input.fragments} | cut -f 1-3 | awk '{{OFS="\t"}}{{print $0"\t{wildcards.sample}\t1"}}' | gzip > {output.format_fragments} || \
-        {{ : | gzip > {output.format_fragments}; }}
-        
+        set -euo pipefail
+        gzip -cd {input.fragments} | cut -f 1-3 | \
+          awk '{{OFS="\t"}}{{print $0"\t{wildcards.sample}\t1"}}' | \
+          gzip > {output.format_fragments}
     """
 
 rule combine_fragments:
@@ -66,10 +114,11 @@ rule combine_fragments:
         fragments = expand("processed/{{split}}_all/{sample}.{{split}}.format_frag.bed.gz", sample=SAMPLES),
     output:
         fragments = "result/fragments/{split}.fragments.bgz",
+        index = "result/fragments/{split}.fragments.bgz.tbi",
     threads: config["resources"]["cuttag_combine_bgzip_threads"]
     shell:"""
-
-        zcat {input.fragments} | sort -k1,1 -k2,2n | uniq |  bgzip -@ {threads} > {output.fragments}
-        tabix -p bed {output.fragments}
-
-    """
+        set -euo pipefail
+        gzip -cd {input.fragments} | LC_ALL=C sort -k1,1 -k2,2n | uniq | \
+          bgzip -@ {threads} > {output.fragments}
+        tabix -f -p bed {output.fragments}
+        """

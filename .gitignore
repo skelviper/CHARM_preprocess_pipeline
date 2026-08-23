@@ -1,3 +1,27 @@
-*ipynb_checkpoints
+# Workflow/runtime state
+.snakemake/
+/workspace/
+/Rawdata/
+/processed/
+/result/
+/results/
+/tmp/
+/qc/
+/benchmark_results/
+
+# Logs and incomplete atomic publications
+*.log
+slurm-*.out
+slurm-*.err
+nohup.out
+*.partial
+*.partial.*
+
+# Python/Jupyter/editor caches
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+*~
+
+# Historical accidental proxy-filename artifact
 192.168.191.246:7890
-.snakemake

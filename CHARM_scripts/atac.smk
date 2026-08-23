@@ -163,7 +163,7 @@ rule bowtie2:
     resources:
         memPerThread= "2G"
     log:
-        bowtie2=OUT+"/logs/bowtie2/{sample}.log"
+        bowtie2=OUT+"/qc/logs/bowtie2/{sample}.log"
     shell:"""
     set +u; source activate; conda activate py3; set -u
     bowtie2 \
@@ -186,7 +186,7 @@ rule filter1:
     input:
         bam=rules.bowtie2.output.bam
     output:
-        bam=temp(OUT+"/bam/intermediate/{sample}.filter1.bam")
+        bam=OUT+"/bam/intermediate/{sample}.filter1.bam"
     threads: 16
     resources:
         memPerThread= "2G"
@@ -206,8 +206,8 @@ rule filter2:
     input:
         bam=rules.filter1.output.bam
     output:
-        fixmate=temp(OUT+"/bam/intermediate/{sample}.fixmate.bam"),
-        bam=temp(OUT+"/bam/intermediate/{sample}.filter2.bam")
+        fixmate=OUT+"/bam/intermediate/{sample}.fixmate.bam",
+        bam=OUT+"/bam/intermediate/{sample}.filter2.bam"
     threads:16
     resources:
         memPerThread= "2G"
@@ -226,8 +226,8 @@ rule markdup:
     input:
         bam=rules.filter2.output.bam
     output:
-        marked=temp(OUT+"/bam/intermediate/{sample}.marked.bam"),
-        nodup=temp(OUT+"/bam/{sample}.nodup.bam"),
+        marked=OUT+"/bam/intermediate/{sample}.marked.bam",
+        nodup=OUT+"/bam/{sample}.nodup.bam",
         bai=OUT+"/bam/{sample}.nodup.bam.bai",
         metrics=OUT+"/qc/markdup/{sample}.dup.qc"
     threads: 30
@@ -341,8 +341,8 @@ rule bedGeneration:
     input:
         bam=rules.blacklist.output.bam,
     output:
-        shift=temp(OUT+"/bed/{sample}.shift.bed"),
-        insert__=temp(OUT+"/bed/{sample}.insert.bed"),
+        shift=OUT+"/bed/{sample}.shift.bed",
+        insert__=OUT+"/bed/{sample}.insert.bed",
     threads: 1
     resources:
         memPerThread= "1G"

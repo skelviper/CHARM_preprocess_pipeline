@@ -1,45 +1,42 @@
-import os
-
-def _pick_raw_read(wildcards, mate):
-    base = f"Rawdata/{wildcards.sample}/{wildcards.sample}"
-    candidates = [f"{base}_{mate}.fq.gz", f"{base}_R{mate}.fq.gz"]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return candidates[0]
-
 rule multiSplit:
     input:
-        read1=lambda wildcards: _pick_raw_read(wildcards, "1"),
-        read2=lambda wildcards: _pick_raw_read(wildcards, "2"),
+        read1=lambda wildcards: contract_raw_read(wildcards.sample, "r1"),
+        read2=lambda wildcards: contract_raw_read(wildcards.sample, "r2"),
+        input_receipt=lambda wildcards: contract_sample_receipt(wildcards.sample),
+        fanout=os.path.join(SCRIPTS_DIR, "fanout_cutadapt.py"),
     output:
-        split_R1="processed/{sample}/{split}/{sample}.{split}.R1.fq.gz",
-        split_R2="processed/{sample}/{split}/{sample}.{split}.R2.fq.gz",
-    threads: config["resources"]["cutadapt_cpu_threads"]
+        ct_R1="processed/{sample}/ct/{sample}.ct.R1.fq.gz",
+        ct_R2="processed/{sample}/ct/{sample}.ct.R2.fq.gz",
+        atac_R1="processed/{sample}/atac/{sample}.atac.R1.fq.gz",
+        atac_R2="processed/{sample}/atac/{sample}.atac.R2.fq.gz",
+    threads: 2 * config["resources"]["cutadapt_cpu_threads"] + 2
     params:
-        adapter=lambda wildcards: config["split"][wildcards.split],
+        ct_adapter=config["split"]["ct"],
+        atac_adapter=config["split"]["atac"],
+        cutadapt_threads=config["resources"]["cutadapt_cpu_threads"],
         seq_format=config.get("format", "illumina")
     shell:"""
-        mkdir -p processed/{wildcards.sample}/{wildcards.split}
-        if [ "{params.seq_format}" = "bgi" ]; then
-            cutadapt -G '{params.adapter}' -j {threads} --untrimmed-output /dev/null --untrimmed-paired-output /dev/null -o {output.split_R1}.tmp -p {output.split_R2}.tmp {input.read1} {input.read2} && \
-            awk '{{if(NR%4==1) gsub("/1"," 1",$1); print $0}}' {output.split_R1}.tmp | gzip > {output.split_R1} && \
-            awk '{{if(NR%4==1) gsub("/2"," 2",$1); print $0}}' {output.split_R2}.tmp | gzip > {output.split_R2} && \
-            rm {output.split_R1}.tmp {output.split_R2}.tmp
-        else
-            cutadapt -G '{params.adapter}' -j {threads} --untrimmed-output /dev/null --untrimmed-paired-output /dev/null -o {output.split_R1} -p {output.split_R2} {input.read1} {input.read2}
-        fi
+        set -euo pipefail
+        python {input.fanout} \
+          --read1 {input.read1} \
+          --read2 {input.read2} \
+          --split ct '{params.ct_adapter}' {output.ct_R1} {output.ct_R2} \
+          --split atac '{params.atac_adapter}' {output.atac_R1} {output.atac_R2} \
+          --threads-per-split {params.cutadapt_threads} \
+          --decompress-threads 1 \
+          --seq-format {params.seq_format}
         """
 
 rule split:
     input:
-        read1=lambda wildcards: _pick_raw_read(wildcards, "1"),
-        read2=lambda wildcards: _pick_raw_read(wildcards, "2"),
+        read1=lambda wildcards: contract_raw_read(wildcards.sample, "r1"),
+        read2=lambda wildcards: contract_raw_read(wildcards.sample, "r2"),
+        input_receipt=lambda wildcards: contract_sample_receipt(wildcards.sample),
     output:
-        DNA_R1=temp("processed/{sample}/DNA/{sample}.dna.R1.fq.gz"),
-        DNA_R2=temp("processed/{sample}/DNA/{sample}.dna.R2.fq.gz"),
-        RNA_R1=temp("processed/{sample}/RNA/{sample}.rna.R1.fq.gz"),
-        RNA_R2=temp("processed/{sample}/RNA/{sample}.rna.R2.fq.gz"),
+        DNA_R1="processed/{sample}/DNA/{sample}.dna.R1.fq.gz",
+        DNA_R2="processed/{sample}/DNA/{sample}.dna.R2.fq.gz",
+        RNA_R1="processed/{sample}/RNA/{sample}.rna.R1.fq.gz",
+        RNA_R2="processed/{sample}/RNA/{sample}.rna.R2.fq.gz",
     threads: config["resources"]["cutadapt_cpu_threads"]
     params:
         adapter=r"XGGTTGAGGTAGTATTGCGCAATG;o=20",
@@ -86,5 +83,5 @@ rule cutRound2_RNA:
     params:
         adapter=r"XNNNNNNNNTTTTTTTTTTTTTTT;o=18"
     shell:"""
-        cutadapt --action=none --discard-untrimmed -G '{params.adapter}' -j {threads} -o {output.RNA_R1} -p {output.RNA_R2} {input}
+        cutadapt --action=none --discard-untrimmed -G '{params.adapter}' -j {threads} -o {output.RNA_R1} -p {output.RNA_R2} {input.RNA_R1} {input.RNA_R2}
         """

@@ -404,6 +404,129 @@ function hic_sam2seg(args)
 	return 0;
 }
 
+/*
+ * Emit one row per mapped alignment without applying sam2seg's fragment-level
+ * eligibility or segment-merging rules. This is a validation reference for
+ * the physical-R2 selector, not a production pipeline dependency.
+ */
+function hic_sam2phase(args)
+{
+	var c, opt = { min_mapq:20, min_baseq:20, verbose:3, fn_var:null, snp:null };
+	while ((c = getopt(args, "q:Q:V:v:")) != null) {
+		if (c == 'q') opt.min_mapq = parseInt(getopt.arg);
+		else if (c == 'Q') opt.min_baseq = parseInt(getopt.arg);
+		else if (c == 'V') opt.verbose = parseInt(getopt.arg);
+		else if (c == 'v') opt.fn_var = getopt.arg;
+	}
+	if (args.length - getopt.ind == 0 || opt.fn_var == null) {
+		print("Usage: hickit.js sam2phase [options] -v <phased-snp.tsv> <in.sam>");
+		print("Options:");
+		print("  -q INT     min mapping quality [" + opt.min_mapq + "]");
+		print("  -Q INT     min base quality [" + opt.min_baseq + "]");
+		print("  -v FILE    phased SNPs (typically vcf2tsv output)");
+		return 1;
+	}
+
+	var buf = new Bytes();
+	opt.snp = {};
+	var var_file = new File(opt.fn_var);
+	while (var_file.readline(buf) >= 0) {
+		var t = buf.toString().split("\t");
+		if (t.length < 4 || t[2].length != 1 || t[3].length != 1) continue;
+		if (opt.snp[t[0]] == null) opt.snp[t[0]] = [];
+		var pos = parseInt(t[1]);
+		opt.snp[t[0]].push([pos - 1, pos, t[2], t[3]]);
+	}
+	var_file.close();
+	for (var chr in opt.snp)
+		Interval.index_end(opt.snp[chr], true);
+
+	var columns = [
+		"qname", "origin", "flag", "chrom", "start", "end", "strand",
+		"mapq", "q_start", "q_end", "aligned_query_length", "phase",
+		"phase0_count", "phase1_count", "other_allele_count"
+	];
+	print("#columns: " + columns.join("\t"));
+
+	var file = args[getopt.ind] == '-'? new File() : new File(args[getopt.ind]);
+	while (file.readline(buf) >= 0) {
+		var t = buf.toString().split("\t");
+		if (t[0][0] == '@') continue;
+		var flag = parseInt(t[1]), mapq = parseInt(t[4]);
+		if ((flag & 0x4) != 0 || mapq < opt.min_mapq) continue;
+
+		var ops = [], m;
+		var ref_len = 0, aligned_query_len = 0, full_query_len = 0;
+		_hic_re_cigar.lastIndex = 0;
+		while ((m = _hic_re_cigar.exec(t[5])) != null) {
+			var len = parseInt(m[1]), op = m[2];
+			ops.push([op, len]);
+			if (op == 'M') ref_len += len, aligned_query_len += len, full_query_len += len;
+			else if (op == 'I') aligned_query_len += len, full_query_len += len;
+			else if (op == 'D') ref_len += len;
+			else if (op == 'S' || op == 'H') full_query_len += len;
+		}
+
+		var left_clip = 0, right_clip = 0;
+		for (var i = 0; i < ops.length; ++i) {
+			if (ops[i][0] != 'S' && ops[i][0] != 'H') break;
+			left_clip += ops[i][1];
+		}
+		for (var i = ops.length - 1; i >= 0; --i) {
+			if (ops[i][0] != 'S' && ops[i][0] != 'H') break;
+			right_clip += ops[i][1];
+		}
+
+		var reverse = (flag & 16) != 0;
+		var q_start = reverse? right_clip : left_clip;
+		var q_end = reverse? full_query_len - left_clip : full_query_len - right_clip;
+		var origin = (flag & 0x40)? 'R1' : ((flag & 0x80)? 'R2' : '.');
+		var physical_reverse = origin == 'R2'? !reverse : reverse;
+		var strand = physical_reverse? '-' : '+';
+		var rs = parseInt(t[3]) - 1, re = rs + ref_len;
+
+		var n = [0, 0], other = 0;
+		if (opt.snp[t[2]] != null) {
+			var variants = Interval.find_ovlp(opt.snp[t[2]], rs, re);
+			var ref_pos = rs, query_pos = 0;
+			for (var i = 0; i < ops.length; ++i) {
+				var op = ops[i][0], len = ops[i][1];
+				if (op == 'M') {
+					for (var j = 0; j < variants.length; ++j) {
+						var p = variants[j][0];
+						if (ref_pos <= p && p < ref_pos + len) {
+							var query_index = p - ref_pos + query_pos;
+							if (query_index < 0 || query_index >= t[9].length)
+								throw Error("CIGAR parsing error");
+							var base = t[9][query_index];
+							var baseq = t[10].length == t[9].length? t[10].charCodeAt(query_index) - 33 : opt.min_baseq;
+							if (baseq >= opt.min_baseq) {
+								if (base == variants[j][2]) ++n[0];
+								else if (base == variants[j][3]) ++n[1];
+								else ++other;
+							}
+						}
+					}
+					ref_pos += len, query_pos += len;
+				} else if (op == 'I') query_pos += len;
+				else if (op == 'D') ref_pos += len;
+				else if (op == 'S') query_pos += len;
+			}
+		}
+		var phase = '.';
+		if (n[0] > 0 && n[1] == 0) phase = 0;
+		else if (n[0] == 0 && n[1] > 0) phase = 1;
+
+		print([
+			t[0], origin, flag, t[2], rs, re, strand, mapq, q_start, q_end,
+			aligned_query_len, phase, n[0], n[1], other
+		].join("\t"));
+	}
+	file.close();
+	buf.destroy();
+	return 0;
+}
+
 function hic_chronly(args)
 {
 	var pat_XY = "^(chr)?([0-9]+|[XY])$", pat_X = "^(chr)?([0-9]+|X)$";
@@ -715,6 +838,7 @@ function main(args)
 		print("Usage: hickit.js <command> [arguments]");
 		print("Commands:");
 		print("  sam2seg        convert SAM to segments/pairs");
+		print("  sam2phase      annotate each SAM alignment with direct SNP phase");
 		print("  vcf2tsv        convert phased VCF to simple TSV (chr, pos1, al1, al2)");
 		print("  con2pair       convert dip-c .con format to .pairs");
 		print("  pair2ncc       convert .pairs to nuc_dynamics .ncc format");
@@ -726,6 +850,7 @@ function main(args)
 
 	var cmd = args.shift();
 	if (cmd == 'sam2seg') hic_sam2seg(args);
+	else if (cmd == 'sam2phase') hic_sam2phase(args);
 	else if (cmd == 'vcf2tsv') hic_vcf2tsv(args);
 	else if (cmd == 'chronly') hic_chronly(args);
 	else if (cmd == 'bedflt') hic_bedflt(args);

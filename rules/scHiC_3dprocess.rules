@@ -1,44 +1,41 @@
 rule hickit_3d:
     input:
         impute_pairs = rules.hickit_2d.output.impute_pairs,
+        output_utils = os.path.join(SCRIPTS_DIR, "output_utils.sh"),
     output:
-        tdg_1m = temp("processed/{sample}/3d_info/1m.{rep}.3dg"),
-        tdg_200k = temp("processed/{sample}/3d_info/200k.{rep}.3dg"),
-        tdg_50k = temp("processed/{sample}/3d_info/50k.{rep}.3dg"),
-        tdg_20k = temp("processed/{sample}/3d_info/20k.{rep}.3dg"),
+        tdg_1m = "processed/{sample}/3d_info/1m.{rep}.3dg",
+        tdg_200k = "processed/{sample}/3d_info/200k.{rep}.3dg",
+        tdg_50k = "processed/{sample}/3d_info/50k.{rep}.3dg",
+        tdg_20k = "processed/{sample}/3d_info/20k.{rep}.3dg",
     resources:
         gpu_proc = config["resources"]["hickit_3d_gpu_proc"]
     shell: """
-        mkdir -p processed/{wildcards.sample}/3d_info
-        if zcat -f {input.impute_pairs} 2>/dev/null | awk '$0!~/^#/ {{ok=1}} END{{exit ok?0:1}}'; then
-            if ! {SCRIPTS_DIR}/hickit -s{wildcards.rep} -M \
-                -i {input.impute_pairs} -Sr1m -c1 -r10m -c2 \
-                -b4m -b1m -O {output.tdg_1m} \
-                -b200k -O {output.tdg_200k} \
-                -D5 -b50k -O {output.tdg_50k} \
-                -D5 -b20k -O {output.tdg_20k}; then
-                echo "WARN: hickit_3d failed for {wildcards.sample} rep {wildcards.rep}, writing empty 3dg outputs" >&2
-                : > {output.tdg_1m}
-                : > {output.tdg_200k}
-                : > {output.tdg_50k}
-                : > {output.tdg_20k}
-            fi
+        set -euo pipefail
+        source {input.output_utils}
+
+        input_records=$(charm_gzip_nonheader_records {input.impute_pairs})
+        if (( input_records > 0 )); then
+            {SCRIPTS_DIR}/hickit -s{wildcards.rep} -M \
+              -i {input.impute_pairs} -Sr1m -c1 -r10m -c2 \
+              -b4m -b1m -O {output.tdg_1m} \
+              -b200k -O {output.tdg_200k} \
+              -D5 -b50k -O {output.tdg_50k} \
+              -D5 -b20k -O {output.tdg_20k}
         else
-            echo "WARN: empty impute pairs for {wildcards.sample}, writing empty 3dg outputs" >&2
             : > {output.tdg_1m}
             : > {output.tdg_200k}
             : > {output.tdg_50k}
             : > {output.tdg_20k}
         fi
-
         """
 
 rule compress_3dg:
     input:
-        tdg = "processed/{sample}/3d_info/{res}.{rep}.3dg"
+        tdg = "processed/{sample}/3d_info/{res}.{rep}.3dg",
     output:
         tdg_gz = "processed/{sample}/3d_info/{res}.{rep}.3dg.gz"
     shell: """
+        set -euo pipefail
         gzip -c {input.tdg} > {output.tdg_gz}
         """
 
@@ -46,30 +43,31 @@ rule hickit_clean3D:
     input:
         tdg = "processed/{sample}/3d_info/{res}.{rep}.3dg",
         impute_pairs = rules.hickit_2d.output.impute_pairs,
+        output_utils = os.path.join(SCRIPTS_DIR, "output_utils.sh"),
     output:
-        clean = temp("result/3d_info/{sample}/clean.{res}.{rep}.3dg")
+        clean = "result/3d_info/{sample}/clean.{res}.{rep}.3dg",
     shell: """
-        mkdir -p result/3d_info/{wildcards.sample}
+        set -euo pipefail
+        source {input.output_utils}
+
         export PYTHONPATH={CHARMTOOLS_PYTHONPATH}:${{PYTHONPATH:-}}
-        if [ ! -s {input.tdg} ]; then
-            : > {output.clean}
-        elif zcat -f {input.impute_pairs} 2>/dev/null | awk '$0!~/^#/ {{ok=1}} END{{exit ok?0:1}}'; then
-            if ! python -m CHARMtools clean3 -r {input.impute_pairs} -i {input.tdg} -o {output.clean}; then
-                echo "WARN: clean3 failed for {wildcards.sample} {wildcards.res}.{wildcards.rep}, writing empty output" >&2
-                : > {output.clean}
-            fi
+        tdg_records=$(charm_plain_nonheader_records {input.tdg})
+        pair_records=$(charm_gzip_nonheader_records {input.impute_pairs})
+        if (( tdg_records > 0 && pair_records > 0 )); then
+            python -m CHARMtools clean3 -r {input.impute_pairs} \
+              -i {input.tdg} -o {output.clean}
         else
             : > {output.clean}
         fi
-        
         """
 
 rule compress_clean3d:
     input:
-        clean = "result/3d_info/{sample}/clean.{res}.{rep}.3dg"
+        clean = "result/3d_info/{sample}/clean.{res}.{rep}.3dg",
     output:
         clean_gz = "result/3d_info/{sample}/clean.{res}.{rep}.3dg.gz"
     shell: """
+        set -euo pipefail
         gzip -c {input.clean} > {output.clean_gz}
         """
 
@@ -80,18 +78,26 @@ rule hickit_align3D:
         tdg_clean2 = "result/3d_info/{sample}/clean.{res}.2.3dg",
         tdg_clean3 = "result/3d_info/{sample}/clean.{res}.3.3dg",
         tdg_clean4 = "result/3d_info/{sample}/clean.{res}.4.3dg",
+        output_utils = os.path.join(SCRIPTS_DIR, "output_utils.sh"),
     output:
         rmsInfo ="result/3d_info/{sample}/{sample}.{res}.align.rms.info"
 
     shell:"""
-        mkdir -p result/3d_info/{wildcards.sample}
-        if [ -s {input.tdg_clean0} ] || [ -s {input.tdg_clean1} ] || [ -s {input.tdg_clean2} ] || [ -s {input.tdg_clean3} ] || [ -s {input.tdg_clean4} ]; then
-            if ! python {SCRIPTS_DIR}/hires3dAligner.py result/3d_info/{wildcards.sample}/clean.{wildcards.res}.[0-4].3dg 2> {output.rmsInfo} > /dev/null; then
-                echo "WARN: align3D failed for {wildcards.sample} {wildcards.res}, writing empty rms info" >&2
-                : > {output.rmsInfo}
-            fi
+        set -euo pipefail
+        source {input.output_utils}
+
+        records0=$(charm_plain_nonheader_records {input.tdg_clean0})
+        records1=$(charm_plain_nonheader_records {input.tdg_clean1})
+        records2=$(charm_plain_nonheader_records {input.tdg_clean2})
+        records3=$(charm_plain_nonheader_records {input.tdg_clean3})
+        records4=$(charm_plain_nonheader_records {input.tdg_clean4})
+        input_records=$((records0 + records1 + records2 + records3 + records4))
+        if (( input_records > 0 )); then
+            python {SCRIPTS_DIR}/hires3dAligner.py \
+              result/3d_info/{wildcards.sample}/clean.{wildcards.res}.[0-4].3dg \
+              2> {output.rmsInfo} > /dev/null
+            test -s {output.rmsInfo}
         else
             : > {output.rmsInfo}
         fi
-        
         """

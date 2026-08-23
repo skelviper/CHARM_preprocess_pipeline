@@ -1,123 +1,288 @@
 rule extract_umi:
     input:
         RNA_R1="processed/{sample}/RNA/{sample}.rna.clean.R1.fq.gz",
-        RNA_R2="processed/{sample}/RNA/{sample}.rna.clean.R2.fq.gz"
+        RNA_R2="processed/{sample}/RNA/{sample}.rna.clean.R2.fq.gz",
+        input_receipt=lambda wildcards: contract_sample_receipt(wildcards.sample),
     output:
-        umi1="processed/{sample}/umi/umi.{sample}.rna.R1.fq.gz",
+        umi1=temp("processed/{sample}/umi/umi.{sample}.rna.R1.fq.gz"),
         umi2="processed/{sample}/umi/umi.{sample}.rna.R2.fq.gz",
-        umi1_withcellname=temp("processed/RNA_all/umicell.{sample}.rna.R1.fq.gz")
+        umi1_withcellname=temp("processed/RNA_all/umicell.{sample}.rna.R1.fq.gz"),
+        umi2_withcellname=temp("processed/RNA_all/umicell.{sample}.rna.R2.fq.gz"),
     params:
         pattern=r"NNNNNNNN",
+        cell_code=lambda wildcards: contract_safe_code(wildcards.sample),
     shell: """
-
         umi_tools extract -p {params.pattern} -I {input.RNA_R2} -S {output.umi2} --read2-in={input.RNA_R1} --read2-out={output.umi1}
-        zcat {output.umi1} | sed 's/_/_{wildcards.sample}_/' | gzip > {output.umi1_withcellname}
-
+        python {SCRIPTS_DIR}/tag_fastq_cell.py --input {output.umi1} --output {output.umi1_withcellname} --cell-code {params.cell_code}
+        python {SCRIPTS_DIR}/tag_fastq_cell.py --input {output.umi2} --output {output.umi2_withcellname} --cell-code {params.cell_code}
         """
-#output UMIs matrix.
+
 
 rule RNAmerge:
     input:
-        expand("processed/RNA_all/umicell.{sample}.rna.R1.fq.gz",sample=SAMPLES)
+        r1_fastqs=expand(
+            "processed/RNA_all/umicell.{sample}.rna.R1.fq.gz", sample=SAMPLES
+        ),
+        r2_fastqs=expand(
+            "processed/RNA_all/umicell.{sample}.rna.R2.fq.gz", sample=SAMPLES
+        ),
     output:
-        rnaAll = temp("processed/RNA_all/rnaAll.fq.gz"),
-    shell:"""
+        rnaAll=temp("processed/RNA_all/rnaAll.fq.gz"),
+        rnaAllR2=temp("tmp/rna_gene_compatibility/rnaAll.R2.fq.gz"),
+    shell: """
+        mkdir -p processed/RNA_all tmp/rna_gene_compatibility
+        cat {input.r1_fastqs} > {output.rnaAll}
+        cat {input.r2_fastqs} > {output.rnaAllR2}
+        """
 
-        cat {input} > {output.rnaAll}
-
-    """
 
 rule RNAclean:
     input:
-        rnaAll = rules.RNAmerge.output.rnaAll,
+        rnaAll=rules.RNAmerge.output.rnaAll,
     output:
-        rnaAllclean="processed/RNA_all/rnaAll.clean.fq.gz"
+        rnaAllclean=temp("processed/RNA_all/rnaAll.clean.fq.gz"),
     threads: config["resources"]["cutadapt_cpu_threads"]
     params:
         adapter=r"AAAAAAAAAAAAAANNNNNNNNCATTGCGCAATACTACCTCAACCCTGTCTCTTATA",
-    shell:"""
-
-        # cut nextera transposes and clean empty line.
+    shell: """
+        # Preserve the production Cutadapt 2.10 R1 cleaning contract.
         cutadapt -a {params.adapter} {input.rnaAll} -j {threads} --minimum-length 1 -o {output.rnaAllclean}
+        """
 
-    """
+
+rule RNAclean_r2_validator:
+    input:
+        rnaAll=rules.RNAmerge.output.rnaAll,
+        rnaAllR2=rules.RNAmerge.output.rnaAllR2,
+    output:
+        r2clean=temp("tmp/rna_gene_compatibility/rnaAll.R2.polyT.fq.gz"),
+        cutadapt_json="qc/stat/rna.r2_polyT.cutadapt.json",
+    threads: config["resources"]["cutadapt_cpu_threads"]
+    params:
+        cutadapt46=CUTADAPT_4_6,
+    shell: """
+        mkdir -p tmp/rna_gene_compatibility qc/stat qc/logs/rna
+        python {SCRIPTS_DIR}/run_cutadapt46.py --executable {params.cutadapt46} -- \
+            --poly-a --minimum-length 0:1 -j {threads} --json {output.cutadapt_json} \
+            -o /dev/null -p {output.r2clean} {input.rnaAll} {input.rnaAllR2} \
+            > qc/logs/rna/r2_polyT.cutadapt.log 2>&1
+        """
+
 
 rule star_mapping:
     input:
-        fastqIn = rules.RNAclean.output.rnaAllclean,
-        starIndex = config["refs"][config["ref_genome"]]["star_index"]
+        fastqIn=rules.RNAclean.output.rnaAllclean,
+        starIndex=config["refs"][config["ref_genome"]]["star_index"],
     output:
-        bamOut = "processed/RNA_all/starOut/star.Aligned.sortedByCoord.out.bam"
+        bamOut="processed/RNA_all/starOut/star.Aligned.sortedByCoord.out.bam",
     threads: config["resources"]["star_cpu_threads"]
-    shell:"""
+    resources:
+        star_slots=1
+    shell: """
         ulimit -n 86400
         STAR --runThreadN {threads} \
         --genomeDir {input.starIndex} \
         --readFilesIn {input.fastqIn} \
         --outFileNamePrefix processed/RNA_all/starOut/star. \
-        --outSAMtype BAM Unsorted SortedByCoordinate --outReadsUnmapped Fastx --outSAMattributes NH HI NM MD\
+        --outSAMtype BAM Unsorted SortedByCoordinate --outReadsUnmapped Fastx --outSAMattributes NH HI NM MD \
         --readFilesCommand zcat
         """
 
-rule makeFolder:
+
+rule star_mapping_r2_validator:
     input:
-        bam = rules.star_mapping.output.bamOut,
+        fastqIn=rules.RNAclean_r2_validator.output.r2clean,
+        starIndex=config["refs"][config["ref_genome"]]["star_index"],
     output:
-        totalBamOut = "processed/RNA_all/bamToCount/star.Aligned.sortedByCoord.out.total.bam",
-        
-    shell:"""
-        mkdir -p processed/RNA_all/bamToCount
+        bamOut=temp(
+            "tmp/rna_gene_compatibility/r2.star.Aligned.sortedByCoord.out.bam"
+        ),
+        finalLog="qc/stat/rna.r2_validator.star.Log.final.out",
+    threads: config["resources"]["star_cpu_threads"]
+    resources:
+        star_slots=1
+    shell: """
+        mkdir -p tmp/rna_gene_compatibility qc/stat
+        ulimit -n 86400
+        STAR --runThreadN {threads} \
+        --genomeDir {input.starIndex} \
+        --readFilesIn {input.fastqIn} \
+        --outFileNamePrefix tmp/rna_gene_compatibility/r2.star. \
+        --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI NM MD \
+        --readFilesCommand zcat
+        mv tmp/rna_gene_compatibility/r2.star.Log.final.out {output.finalLog}
+        """
+
+
+rule stage_r1_all_bam:
+    input:
+        bam=rules.star_mapping.output.bamOut,
+    output:
+        totalBamOut=temp(
+            "processed/RNA_all/bamToCount/r1_all/star.Aligned.sortedByCoord.out.total.bam"
+        ),
+    shell: """
+        mkdir -p processed/RNA_all/bamToCount/r1_all
         cp {input.bam} {output.totalBamOut}
-    """
+        """
+
+
+rule filter_rna_gene_compatibility:
+    input:
+        r1_bam=rules.star_mapping.output.bamOut,
+        r2_bam=rules.star_mapping_r2_validator.output.bamOut,
+        annotation=config["refs"][config["ref_genome"]]["annotations"],
+        input_contract=INPUT_CONTRACT_PATH,
+        classifier=f"{SCRIPTS_DIR}/classify_rna_gene_compatibility.py",
+    output:
+        compatible_bam=temp(
+            "processed/RNA_all/bamToCount/r1_compatible/star.Aligned.sortedByCoord.out.total.bam"
+        ),
+        concordant_bam=temp(
+            "processed/RNA_all/bamToCount/r1r2_concordant/star.Aligned.sortedByCoord.out.total.bam"
+        ),
+        summary="qc/stat/rna.gene_compatibility.per_cell.tsv",
+    threads: config["resources"]["count_cpu_threads"]
+    resources:
+        count_slots=1
+    params:
+        min_mapq=RNA_COMPATIBILITY_CONFIG["min_mapq"],
+        feature_type=RNA_COMPATIBILITY_CONFIG["feature_type"],
+        feature_id=RNA_COMPATIBILITY_CONFIG["feature_id"],
+        r1_strand=RNA_COMPATIBILITY_CONFIG["r1_strand"],
+        r2_strand=RNA_COMPATIBILITY_CONFIG["r2_strand"],
+    shell: """
+        mkdir -p processed/RNA_all/bamToCount/r1_compatible \
+            processed/RNA_all/bamToCount/r1r2_concordant qc/stat qc/logs/rna
+        compat_tmp_root="${{TMPDIR:-tmp}}"
+        mkdir -p "$compat_tmp_root"
+        compat_tmp=$(mktemp -d "$compat_tmp_root/charm-rna-compatibility.XXXXXX")
+        trap 'rm -rf -- "$compat_tmp"' EXIT
+        ln -s "$(realpath {input.r1_bam})" "$compat_tmp/r1.bam"
+        ln -s "$(realpath {input.r2_bam})" "$compat_tmp/r2.bam"
+        annotation_file=$(realpath {input.annotation})
+        contract_file=$(realpath {input.input_contract})
+        (
+            cd "$compat_tmp"
+            featureCounts -a "$annotation_file" -o r1.assigned -R BAM -T {threads} \
+                -Q {params.min_mapq} -t {params.feature_type} -g {params.feature_id} \
+                -O -s {params.r1_strand} --primary r1.bam \
+                > "{WORK_DIR}/qc/logs/rna/r1.compatibility.featureCounts.log" 2>&1
+            featureCounts -a "$annotation_file" -o r2.assigned -R BAM -T {threads} \
+                -Q {params.min_mapq} -t {params.feature_type} -g {params.feature_id} \
+                -O -s {params.r2_strand} --primary r2.bam \
+                > "{WORK_DIR}/qc/logs/rna/r2.compatibility.featureCounts.log" 2>&1
+            samtools sort -n -@ {threads} -o r1.name.bam r1.bam.featureCounts.bam
+            samtools sort -n -@ {threads} -o r2.name.bam r2.bam.featureCounts.bam
+            python {input.classifier} \
+                --r1-bam r1.name.bam --r2-bam r2.name.bam \
+                --annotation "$annotation_file" --contract "$contract_file" \
+                --compatible-bam compatible.name.bam \
+                --concordant-bam concordant.name.bam \
+                --summary compatibility.tsv --min-mapq {params.min_mapq}
+            samtools sort -@ {threads} -o "{WORK_DIR}/{output.compatible_bam}" compatible.name.bam
+            samtools sort -@ {threads} -o "{WORK_DIR}/{output.concordant_bam}" concordant.name.bam
+            mv compatibility.tsv "{WORK_DIR}/{output.summary}"
+        )
+        """
+
 
 rule RNA_snp_split:
     input:
-        RNAsnp = config["refs"][config["ref_genome"]]["RNAsnp"],
-        bam = rules.makeFolder.output.totalBamOut,
-        bamToProcess = rules.star_mapping.output.bamOut,
+        RNAsnp=config["refs"][config["ref_genome"]]["RNAsnp"],
+        bam="processed/RNA_all/bamToCount/{rna_output_type}/star.Aligned.sortedByCoord.out.total.bam",
     output:
-        dirOut = directory("processed/RNA_all/snpSplitRes"),
-        genome1BamOut = "processed/RNA_all/snpSplitRes/star.Aligned.sortedByCoord.out.genome1.bam",
-        genome2BamOut = "processed/RNA_all/snpSplitRes/star.Aligned.sortedByCoord.out.genome2.bam",
-        genome1Copied = "processed/RNA_all/bamToCount/star.Aligned.sortedByCoord.out.genome1.bam",
-        genome2Copied = "processed/RNA_all/bamToCount/star.Aligned.sortedByCoord.out.genome2.bam",
-    shell:"""
-        
-        mkdir -p processed/RNA_all/snpSplitRes
-        SNPsplit --snp_file {input.RNAsnp} {input.bamToProcess} -o {output.dirOut}
-
-        cp {output.genome1BamOut} {output.genome1Copied}
-        cp {output.genome2BamOut} {output.genome2Copied}
-
+        genome1BamOut=temp(
+            "processed/RNA_all/bamToCount/{rna_output_type}/star.Aligned.sortedByCoord.out.genome1.bam"
+        ),
+        genome2BamOut=temp(
+            "processed/RNA_all/bamToCount/{rna_output_type}/star.Aligned.sortedByCoord.out.genome2.bam"
+        ),
+    shell: """
+        split_tmp_root="${{TMPDIR:-tmp}}"
+        mkdir -p "$split_tmp_root" processed/RNA_all/bamToCount/{wildcards.rna_output_type}
+        split_tmp=$(mktemp -d "$split_tmp_root/charm-rna-snpsplit.{wildcards.rna_output_type}.XXXXXX")
+        trap 'rm -rf -- "$split_tmp"' EXIT
+        ln -s "$(realpath {input.bam})" "$split_tmp/input.bam"
+        mkdir -p "$split_tmp/output"
+        SNPsplit --snp_file {input.RNAsnp} "$split_tmp/input.bam" -o "$split_tmp/output"
+        mv "$split_tmp/output/input.genome1.bam" {output.genome1BamOut}
+        mv "$split_tmp/output/input.genome2.bam" {output.genome2BamOut}
         """
-        
+
+
 rule count:
     input:
-        bamIn = "processed/RNA_all/bamToCount/star.Aligned.sortedByCoord.out.{genome}.bam",
-        geneAnnotations = config["refs"][config["ref_genome"]]["annotations"],
+        bamIn="processed/RNA_all/bamToCount/{rna_output_type}/star.Aligned.sortedByCoord.out.{genome}.bam",
+        geneAnnotations=config["refs"][config["ref_genome"]]["annotations"],
+        inputContract=INPUT_CONTRACT_PATH,
     output:
-        CountMatrix = "result/RNA_Res/counts.{type}.{genome}.tsv",
+        SafeCountMatrix="result/RNA_Res/{rna_output_type}/counts.{type}.{genome}.safe.tsv",
+        CountMatrix="result/RNA_Res/{rna_output_type}/counts.{type}.{genome}.tsv",
+        CellContract="result/RNA_Res/{rna_output_type}/counts.{type}.{genome}.cell_contract.tsv",
+        CountBam="processed/RNA_all/feature_{rna_output_type}_{type}_{genome}/samsort.bam",
+        CountBamIndex="processed/RNA_all/feature_{rna_output_type}_{type}_{genome}/samsort.bam.bai",
     params:
-        countParams = r"--per-gene --per-cell --gene-tag=XT --wide-format-cell-counts --assigned-status-tag=XS",
+        countParams=r"--per-gene --per-cell --gene-tag=XT --wide-format-cell-counts --assigned-status-tag=XS",
     threads: config["resources"]["count_cpu_threads"]
-    shell:"""
-        
-        mkdir -p ./processed/RNA_all/feature_{wildcards.type}_{wildcards.genome}/
-        featureCounts -a {input.geneAnnotations} -o ./processed/RNA_all/feature_{wildcards.type}_{wildcards.genome}/gene_assigned -R BAM {input.bamIn} -T {threads} -Q 30 -t {wildcards.type} -g gene_name -O -s 1 
-        #OUTPUT countMatix by gene
-        samtools sort ./processed/RNA_all/feature_{wildcards.type}_{wildcards.genome}/star.Aligned.sortedByCoord.out.{wildcards.genome}.bam.featureCounts.bam -o ./processed/RNA_all/feature_{wildcards.type}_{wildcards.genome}/samsort.bam
-        samtools index ./processed/RNA_all/feature_{wildcards.type}_{wildcards.genome}/samsort.bam
-        umi_tools count {params.countParams} -I ./processed/RNA_all/feature_{wildcards.type}_{wildcards.genome}/samsort.bam -S ./result/RNA_Res/counts.{wildcards.type}.{wildcards.genome}.tsv
+    resources:
+        count_slots=1
+    shell: """
+        feature_root=./processed/RNA_all/feature_{wildcards.rna_output_type}_{wildcards.type}_{wildcards.genome}
+        result_root=./result/RNA_Res/{wildcards.rna_output_type}
+        mkdir -p "$feature_root" "$result_root"
+        feature_dir=$(realpath "$feature_root")
+        input_bam=$(realpath {input.bamIn})
+        annotation_file=$(realpath {input.geneAnnotations})
+        fc_tmp_root="${{TMPDIR:-tmp}}"
+        mkdir -p "$fc_tmp_root"
+        fc_tmp=$(mktemp -d "$fc_tmp_root/charm-featurecounts.{wildcards.rna_output_type}.{wildcards.type}.{wildcards.genome}.XXXXXX")
+        trap 'rm -rf -- "$fc_tmp"' EXIT
 
+        # Subread 2.0.1 overflows an internal path buffer in long work directories.
+        ln -s "$input_bam" "$fc_tmp/input.bam"
+        (
+            cd "$fc_tmp"
+            featureCounts -a "$annotation_file" -o gene_assigned -R BAM input.bam \
+                -T {threads} -Q 30 -t {wildcards.type} -g gene_name -O -s 1
+        )
+        mv "$fc_tmp/gene_assigned" "$feature_dir/gene_assigned"
+        mv "$fc_tmp/gene_assigned.summary" "$feature_dir/gene_assigned.summary"
+        mv "$fc_tmp/input.bam.featureCounts.bam" "$feature_dir/star.Aligned.sortedByCoord.out.{wildcards.genome}.bam.featureCounts.bam"
+
+        samtools sort "$feature_dir/star.Aligned.sortedByCoord.out.{wildcards.genome}.bam.featureCounts.bam" -o {output.CountBam}
+        samtools index {output.CountBam} {output.CountBamIndex}
+        umi_tools count {params.countParams} -I {output.CountBam} -S {output.SafeCountMatrix}
+        python {SCRIPTS_DIR}/rename_count_matrix.py --input {output.SafeCountMatrix} \
+            --contract {input.inputContract} --output {output.CountMatrix} \
+            --receipt {output.CellContract}
         """
+
 
 rule convertCountFormat:
     input:
-        countMatrix = rules.count.output.CountMatrix,
+        countMatrix=rules.count.output.CountMatrix,
     output:
-        convertedCountMatrix = "result/RNA_Res/counts.{type}.{genome}.format.tsv",
-    shell:"""
-        
+        convertedCountMatrix="result/RNA_Res/{rna_output_type}/counts.{type}.{genome}.format.tsv",
+    shell: """
         Rscript {SCRIPTS_DIR}/fraction.R {input.countMatrix} {output.convertedCountMatrix}
-        
-    """
+        """
+
+
+rule summarize_rna_output_modes:
+    input:
+        expand(
+            "result/RNA_Res/{rna_output_type}/counts.{type}.total.format.tsv",
+            rna_output_type=RNA_OUTPUT_TYPES,
+            type=["gene", "exon"],
+        )
+    output:
+        per_cell=RNA_MODE_QC_OUTPUTS[0],
+        summary=RNA_MODE_QC_OUTPUTS[1],
+    params:
+        modes=" ".join(RNA_OUTPUT_TYPES),
+    shell: """
+        python {SCRIPTS_DIR}/summarize_rna_output_modes.py \
+            --matrix-root result/RNA_Res --modes {params.modes} \
+            --per-cell {output.per_cell} --summary {output.summary}
+        """

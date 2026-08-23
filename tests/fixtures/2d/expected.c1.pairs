@@ -1,0 +1,15 @@
+## pairs format v1.0
+#sorted: chr1-chr2-pos1-pos2
+#shape: upper triangle
+#chromosome: chr1 1000000
+#chromosome: chrX 1000000
+#chromosome: chrY 1000000
+#columns:readID	chrom1	pos1	chrom2	pos2	strand1	strand2	phase0	phase1
+.	chr1	1020	chr1	51000	+	+	0	1
+.	chr1	3020	chr1	53000	+	+	.	.
+.	chr1	5020	chr1	55000	+	+	.	.
+.	chr1	7020	chr1	57000	+	+	.	.
+.	chr1	9020	chr1	59000	+	+	.	.
+.	chr1	11020	chr1	61000	+	+	.	.
+.	chr1	101000	chrX	20020	+	+	.	1
+.	chr1	111000	chrY	20020	+	+	.	0

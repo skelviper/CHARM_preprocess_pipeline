@@ -1,17 +1,65 @@
 if_snp: True
 if_ht: False
-if_structure: True
+# c123 is always a 2D contact output. This switch controls only imputation,
+# RMSD, and 3D reconstruction.
+if_structure: False
 if_RNA_snp_split: False
-if_charm: False
-relaxed_rule_all: false
-work_dir: /work/run_hires/data1/
-format: bgi # illumina or bgi
+# Required assay family: charm includes ATAC/CUT&Tag; hires does not.
+experiment_type: charm  # charm or hires
+work_dir: ../workspace
+format: illumina  # illumina or bgi
+
+# RNA matrix modes. Select one or more of: r1_all, r1_compatible,
+# r1r2_concordant. The default emits all three matrices.
+# r1_all ignores R2. r1_compatible removes R1 qnames when R2 maps uniquely at
+# MAPQ >= 30 but has no gene-body assignment or has a gene locus incompatible
+# with R1. r1r2_concordant requires informative compatible mates.
+rna_output_types:
+  - r1_all
+  - r1_compatible
+  - r1r2_concordant
+# Mode reported by the unsuffixed RNA columns in qc/metadata_raw.tsv. It must
+# also be selected in rna_output_types; other modes stay in RNA mode QC tables.
+rna_primary_output_type: r1_all
+
+rna_gene_compatibility:
+  min_mapq: 30
+  feature_type: gene
+  feature_id: gene_id
+  allow_overlapping_gene_loci: true
+  overlap_connected_components: true
+  r1_strand: 1
+  r2_strand: 2
+
+cuttag_fragments:
+  definition: r2_5prime_unclipped_v2_no_hickit_gate
+  min_mapq: 20
+  min_baseq: 20
+  require_original_r2_qstart_bp: 0
+  allow_opposite_end_clipping: true
+  phase_policy: direct_r2_then_first_phased_r1
+  endpoint_dedup_eps_bp: 1
+  temp_root: tmp/r2_5prime_unclipped
+
+metadata:
+  kernel_name: ir
 
 
-ref_genome: GRCm38  
+ref_genome: GRCm38
 yperx_threshold: 0.015 # GM12878 is all female,set a bigger value
+# Used only when qualifying mapped records contain no MAPQ >= 30 chrX/chrY
+# records. The authoritative sex-classification receipt marks the ratio as
+# unmeasured; XX preserves the legacy low-ratio operational branch.
+sex_no_xy_fallback: XX
 softwares:
+  # Managed as an independent Part 3 source tree, not vendored in this pipeline.
   CHARMtools: ../CHARMtools
+  # Existing validated Cutadapt 4.6 executable; no per-rule Conda environment
+  # is created. The main workflow continues to run in the charm environment.
+  cutadapt_4_6: /mnt/ssd/zliu/miniforge3/envs/charm_rerun/bin/cutadapt
+  # Existing R/Jupyter runtime containing Signac, Seurat, mm10, and IRkernel.
+  # This executable is reused directly; the workflow never creates an env.
+  metadata_jupyter: /mnt/ssd/zliu/miniforge3/envs/R/bin/jupyter
   k8: k8
 refs:
   GRCm38:
@@ -43,10 +91,13 @@ resources:
   star_cpu_threads: 20
   align2pairs_cpu_threads: 12
   align2pairs_mem_mb: 10000
+  # Empty selects TMPDIR, then a per-sample path under the run workspace.
+  align2pairs_tmp_root: ""
   count_cpu_threads: 6
   cuttag_bwa_threads: 7
   cuttag_sort_threads: 3
   cuttag_bam2bed_sort_threads: 4
+  cuttag_phase_batch_qnames: 32768
   cuttag_combine_bgzip_threads: 5
   generateStat_cpu_threads: 40
   hickit_3d_gpu_proc: 1
