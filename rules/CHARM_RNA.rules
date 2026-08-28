@@ -29,11 +29,11 @@ rule RNAmerge:
     output:
         rnaAll=temp("processed/RNA_all/rnaAll.fq.gz"),
         rnaAllR2=temp("tmp/rna_gene_compatibility/rnaAll.R2.fq.gz"),
-    shell: """
-        mkdir -p processed/RNA_all tmp/rna_gene_compatibility
-        cat {input.r1_fastqs} > {output.rnaAll}
-        cat {input.r2_fastqs} > {output.rnaAllR2}
-        """
+    run:
+        from aggregate_inputs import concatenate_gzip_members
+
+        concatenate_gzip_members(input.r1_fastqs, output.rnaAll)
+        concatenate_gzip_members(input.r2_fastqs, output.rnaAllR2)
 
 
 rule RNAclean:

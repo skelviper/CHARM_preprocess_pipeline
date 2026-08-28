@@ -116,9 +116,9 @@ rule combine_fragments:
         fragments = "result/fragments/{split}.fragments.bgz",
         index = "result/fragments/{split}.fragments.bgz.tbi",
     threads: config["resources"]["cuttag_combine_bgzip_threads"]
-    shell:"""
-        set -euo pipefail
-        gzip -cd {input.fragments} | LC_ALL=C sort -k1,1 -k2,2n | uniq | \
-          bgzip -@ {threads} > {output.fragments}
-        tabix -f -p bed {output.fragments}
-        """
+    run:
+        from aggregate_inputs import combine_fragment_files
+
+        combine_fragment_files(
+            input.fragments, output.fragments, output.index, threads
+        )

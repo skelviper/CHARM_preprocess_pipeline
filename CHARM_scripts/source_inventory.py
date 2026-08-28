@@ -37,6 +37,7 @@ FIXED_SOURCE_GROUPS = OrderedDict(
                 "CHARM_scripts/CHARM_dedup.R",
                 "CHARM_scripts/CTHiRES.extract_dedup_reads.R",
                 "CHARM_scripts/atac.smk",
+                "CHARM_scripts/aggregate_inputs.py",
                 "CHARM_scripts/audit_complete_run.py",
                 "CHARM_scripts/build_phased_snp_index.py",
                 "CHARM_scripts/classify_2d_bam.py",
