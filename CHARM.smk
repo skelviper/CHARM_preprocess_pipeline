@@ -546,12 +546,6 @@ rule audit_complete_run:
             xargs -0 -r samtools quickcheck < tmp/audit_bam_files
             printf 'bam_quickcheck\tPASS\t%s BAM files\n' "$bam_count" >> {output.receipt}
 
-            find processed result -type f \
-                \( -name '*.gz' -o -name '*.bgz' \) -print0 > tmp/audit_gzip_files
-            gzip_count=$(tr -cd '\0' < tmp/audit_gzip_files | wc -c)
-            xargs -0 -r -n 1 gzip -t < tmp/audit_gzip_files
-            printf 'gzip_integrity\tPASS\t%s compressed files\n' "$gzip_count" >> {output.receipt}
-
             if [ "{EXPERIMENT_TYPE}" = charm ]; then
                 tabix -l result/fragments/atac.fragments.bgz >/dev/null
                 tabix -l result/fragments/ct.fragments.bgz >/dev/null

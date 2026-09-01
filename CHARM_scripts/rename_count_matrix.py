@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Strictly restore authoritative sample names in an UMI-tools count matrix.
+"""Restore authoritative sample names in an UMI-tools count matrix.
 
 This keeps the safe-code/name mapping approach validated by Part 2
-``rna_read_mode/scripts/rename_count_matrix.py`` while making missing columns a
-hard error for the reusable pipeline contract.
+``rna_read_mode/scripts/rename_count_matrix.py``. UMI-tools omits cells with no
+counted UMIs, so expected-but-missing columns are restored as zeroes. Unknown or
+duplicated cell codes remain contract errors.
 """
 
 import argparse
@@ -52,13 +53,15 @@ def rename_count_matrix(input_path, contract_path, output_path, receipt_path):
                         ",".join(duplicates)
                     )
                 )
-            missing = sorted(set(expected_codes) - set(observed_codes))
-            unexpected = sorted(set(observed_codes) - set(expected_codes))
-            if missing or unexpected:
+            observed_code_set = set(observed_codes)
+            missing = [
+                code for code in expected_codes if code not in observed_code_set
+            ]
+            unexpected = sorted(observed_code_set - set(expected_codes))
+            if unexpected:
                 raise ValueError(
-                    "UMI count matrix cell-code mismatch; missing={}, unexpected={}".format(
-                        ",".join(missing) or "none",
-                        ",".join(unexpected) or "none",
+                    "unexpected cell codes in UMI count matrix: {}".format(
+                        ",".join(unexpected)
                     )
                 )
 
@@ -74,7 +77,11 @@ def rename_count_matrix(input_path, contract_path, output_path, receipt_path):
                         )
                     )
                 writer.writerow(
-                    [row[0]] + [row[positions[code]] for code in expected_codes]
+                    [row[0]]
+                    + [
+                        row[positions[code]] if code in positions else "0"
+                        for code in expected_codes
+                    ]
                 )
                 row_count += 1
             destination.flush()
@@ -92,12 +99,20 @@ def rename_count_matrix(input_path, contract_path, output_path, receipt_path):
         "contract_sha256\t{}\n"
         "expected_cells\t{}\n"
         "observed_cells\t{}\n"
+        "missing_cells_filled_zero\t{}\n"
+        "unexpected_cells\t{}\n"
+        "missing_cell_codes\t{}\n"
+        "missing_cell_names\t{}\n"
         "feature_rows\t{}\n"
         "cell_column_contract\tPASS\n"
     ).format(
         contract["contract_sha256"],
         len(expected_codes),
         len(observed_codes),
+        len(missing),
+        len(unexpected),
+        ",".join(missing) or "none",
+        ",".join(code_to_name[code] for code in missing) or "none",
         row_count,
     )
     write_if_changed(receipt_path, receipt.encode("utf-8"))

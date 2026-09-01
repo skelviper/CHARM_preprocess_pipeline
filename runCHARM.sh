@@ -128,7 +128,7 @@ cd "${WORK_DIR}"
 "${SNAKEMAKE_BIN}" \
     --cluster 'sbatch --qos=high -w node03 --output=qc/logs/slurm-%j.out --cpus-per-task={threads} -t 7-00:00 -J CHARM!' \
     --jobs 1024 \
-    --resources star_slots=1 count_slots=1 \
+    --resources star_slots=1 count_slots=6 \
     --rerun-incomplete \
     -s "${PIPELINE_DIR}/CHARM.smk" \
     "${snakemake_args[@]}"
