@@ -341,7 +341,7 @@ QC_STRUCTURE_STAT_OUTPUTS = (
 QC_STAT_OUTPUTS = (
     QC_COMMON_STAT_OUTPUTS + QC_CHARM_STAT_OUTPUTS + QC_STRUCTURE_STAT_OUTPUTS
 )
-NOTEBOOK_OUTPUTS = ["qc/stat.ipynb"]
+NOTEBOOK_OUTPUTS = ["qc/stat.ipynb", "qc/metadata_qc.R"]
 METADATA_OUTPUTS = ["qc/stat.executed.ipynb", "qc/metadata_raw.tsv"]
 AUDIT_OUTPUTS = ["qc/COMPLETE_RUN_AUDIT.tsv"]
 PROVENANCE_OUTPUTS = [
@@ -476,6 +476,7 @@ rule generate_statistics:
         raw_fastqs = QC_RAW_FASTQ_INPUTS,
         upstream = QC_UPSTREAM_OUTPUTS,
         script = os.path.join(SCRIPTS_DIR, "generateStat.sh"),
+        contract_script = os.path.join(SCRIPTS_DIR, "generate_stat_contract.py"),
     output:
         QC_STAT_OUTPUTS
     threads: config["resources"]["generateStat_cpu_threads"]
@@ -493,10 +494,13 @@ rule generate_statistics:
 rule stage_qc_notebook:
     input:
         notebook = os.path.join(SCRIPTS_DIR, "stat.ipynb"),
+        helper = os.path.join(SCRIPTS_DIR, "metadata_qc.R"),
     output:
         notebook = NOTEBOOK_OUTPUTS[0],
+        helper = NOTEBOOK_OUTPUTS[1],
     shell:
-        "mkdir -p qc && cp {input.notebook} {output.notebook}"
+        "mkdir -p qc && cp {input.notebook} {output.notebook} && "
+        "cp {input.helper} {output.helper}"
 
 
 rule generate_metadata:
@@ -504,6 +508,11 @@ rule generate_metadata:
         notebook = NOTEBOOK_OUTPUTS[0],
         jupyter = METADATA_JUPYTER,
         upstream = METADATA_UPSTREAM_OUTPUTS,
+        reference = (
+            [config["refs"][config["ref_genome"]]["bwa_mem2_index"] + ".fai",
+             config["refs"][config["ref_genome"]]["annotations"]]
+            if IS_CHARM and config["ref_genome"] != "GRCm38" else []
+        ),
     output:
         executed_notebook = METADATA_OUTPUTS[0],
         metadata = METADATA_OUTPUTS[1],
@@ -518,6 +527,7 @@ rule generate_metadata:
         export IPYTHONDIR="{WORK_DIR}/tmp/ipython"
         (
             cd qc
+            export PATH="$(dirname "{input.jupyter}"):$PATH"
             {input.jupyter} nbconvert --to notebook --execute stat.ipynb \
                 --output stat.executed.ipynb \
                 --ExecutePreprocessor.timeout=-1 \
@@ -531,6 +541,7 @@ rule audit_complete_run:
     input:
         deliverables = DELIVERY_TARGET_OUTPUTS,
         script = os.path.join(SCRIPTS_DIR, "audit_complete_run.py"),
+        contract_script = os.path.join(SCRIPTS_DIR, "generate_stat_contract.py"),
     output:
         receipt = AUDIT_OUTPUTS[0],
     log:
@@ -601,3 +612,6 @@ include: os.path.join(PIPELINE_DIR, "rules/scHiC_2dprocess.rules")
 if config["if_structure"]:
     include: os.path.join(PIPELINE_DIR, "rules/scHiC_3dprocess.rules")
 include: os.path.join(PIPELINE_DIR, "rules/CHARM_RNA.rules")
+
+from snakemake_compat import track_rule_changes
+track_rule_changes(workflow)

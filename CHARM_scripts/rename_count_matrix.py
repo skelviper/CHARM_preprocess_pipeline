@@ -9,6 +9,7 @@ duplicated cell codes remain contract errors.
 
 import argparse
 import csv
+import itertools
 import os
 import sys
 import tempfile
@@ -43,6 +44,10 @@ def rename_count_matrix(input_path, contract_path, output_path, receipt_path):
                 raise ValueError("empty UMI count matrix: {}".format(input_path))
             if not header or header[0] != "gene":
                 raise ValueError("UMI count matrix first column must be 'gene'")
+            first_row = next(reader, None)
+            # UMI-tools 1.0.1 writes "gene\t\n" when no UMI was counted.
+            if header == ["gene", ""] and first_row is None:
+                header = ["gene"]
             observed_codes = header[1:]
             if len(observed_codes) != len(set(observed_codes)):
                 duplicates = sorted(
@@ -69,7 +74,8 @@ def rename_count_matrix(input_path, contract_path, output_path, receipt_path):
                 code: position + 1 for position, code in enumerate(observed_codes)
             }
             writer.writerow(["gene"] + [code_to_name[code] for code in expected_codes])
-            for row_number, row in enumerate(reader, start=2):
+            rows = itertools.chain([] if first_row is None else [first_row], reader)
+            for row_number, row in enumerate(rows, start=2):
                 if len(row) != len(header):
                     raise ValueError(
                         "UMI count matrix row {} has {} columns, expected {}".format(

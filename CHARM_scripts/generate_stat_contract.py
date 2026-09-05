@@ -10,6 +10,7 @@ missing enabled structure outputs.
 import argparse
 import csv
 import gzip
+import math
 import os
 import re
 import sys
@@ -176,8 +177,8 @@ def sample_from_qname(qname, mapping):
 
 def write_rna_alignment_stats(contract, input_handle, output_path):
     mapping = code_to_sample(contract)
-    total = {}
-    assigned = {}
+    total = {sample: 0 for sample in mapping.values()}
+    assigned = {sample: 0 for sample in mapping.values()}
     for line_number, line in enumerate(input_handle, start=1):
         fields = line.rstrip("\r\n").split("\t")
         if len(fields) < 11:
@@ -246,6 +247,19 @@ def write_cleaned_pair_stats(contract, work_dir, pairs_output, inter_output, wor
     write_if_changed(inter_output, "".join(inter_lines).encode("utf-8"))
 
 
+def read_rmsd_value(path):
+    lines = path.read_text().splitlines()
+    matches = [RMSD_RE.search(line) for line in lines if "top3 RMS RMSD:" in line]
+    if "#status\tinsufficient_data" in lines and not matches:
+        return None
+    if len(matches) != 1 or matches[0] is None or "#status\tinsufficient_data" in lines:
+        raise StatisticsContractError("invalid or missing RMSD metric: {}".format(path))
+    value = float(matches[0].group(1))
+    if not math.isfinite(value) or value < 0:
+        raise StatisticsContractError("invalid RMSD value: {}".format(path))
+    return value
+
+
 def write_rmsd_stats(contract, work_dir, resolutions, output_path):
     work_path = Path(work_dir)
     samples = [sample["sample_name"] for sample in contract["samples"]]
@@ -273,19 +287,14 @@ def write_rmsd_stats(contract, work_dir, resolutions, output_path):
     rmsd_lines = []
     for _, _, path in rmsd_paths:
         try:
-            lines = path.read_text().splitlines()
+            value = read_rmsd_value(path)
         except (OSError, UnicodeError) as error:
             raise StatisticsContractError(
                 "cannot read required RMSD output {!r}: {}".format(str(path), error)
             )
-        matches = [line for line in lines if RMSD_RE.search(line)]
-        if len(matches) != 1:
-            raise StatisticsContractError(
-                "required RMSD output {!r} contains {} metric lines, expected 1".format(
-                    str(path), len(matches)
-                )
-            )
-        rmsd_lines.append("{}:{}\n".format(path.relative_to(work_path), matches[0]))
+        rmsd_lines.append("{}:[M::__main__] top3 RMS RMSD: {}\n".format(
+            path.relative_to(work_path), "NA" if value is None else value
+        ))
 
     write_if_changed(output_path, "".join(sorted(rmsd_lines)).encode("utf-8"))
 

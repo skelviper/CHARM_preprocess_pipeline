@@ -78,6 +78,7 @@ rule hickit_align3D:
         tdg_clean2 = "result/3d_info/{sample}/clean.{res}.2.3dg",
         tdg_clean3 = "result/3d_info/{sample}/clean.{res}.3.3dg",
         tdg_clean4 = "result/3d_info/{sample}/clean.{res}.4.3dg",
+        aligner = os.path.join(SCRIPTS_DIR, "hires3dAligner.py"),
         output_utils = os.path.join(SCRIPTS_DIR, "output_utils.sh"),
     output:
         rmsInfo ="result/3d_info/{sample}/{sample}.{res}.align.rms.info"
@@ -93,11 +94,11 @@ rule hickit_align3D:
         records4=$(charm_plain_nonheader_records {input.tdg_clean4})
         input_records=$((records0 + records1 + records2 + records3 + records4))
         if (( input_records > 0 )); then
-            python {SCRIPTS_DIR}/hires3dAligner.py \
+            python {input.aligner} \
               result/3d_info/{wildcards.sample}/clean.{wildcards.res}.[0-4].3dg \
               2> {output.rmsInfo} > /dev/null
             test -s {output.rmsInfo}
         else
-            : > {output.rmsInfo}
+            printf '#status\tinsufficient_data\n' > {output.rmsInfo}
         fi
         """

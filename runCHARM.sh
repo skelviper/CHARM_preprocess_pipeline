@@ -18,8 +18,9 @@ is archived before the replacement is published.
 runCHARM.sh resolves config.yaml plus Snakemake --configfile and --config
 work_dir=... overrides before touching run state. It owns --snakefile and
 --directory and rejects --profile. It runs the entire workflow in the existing
-charm Conda environment, uses work_dir/tmp, and removes that temporary tree
-when the launcher exits.
+charm Conda environment. Each execution gets its own temporary directory under
+work_dir/tmp (or TMPDIR); only that directory is removed on exit. Dry-runs
+preserve existing temporary files.
 Mapping uses one BWA job per cell. Jobs are
 submitted directly through Snakemake's --cluster interface, matching the
 frozen Part 1 launch model. Real Slurm and complete 200-cell execution gates
@@ -96,6 +97,12 @@ snakemake_args=("${resolved_run[@]:1}")
 export CHARM_EFFECTIVE_WORK_DIR="${WORK_DIR}"
 
 WORKSPACE_TMP="${WORK_DIR}/tmp"
+dry_run=0
+for argument in "${snakemake_args[@]}"; do
+    case "$argument" in
+        -n|--dry-run|--dryrun) dry_run=1 ;;
+    esac
+done
 if [ -z "${TMPDIR:-}" ]; then
     TMPDIR="${WORKSPACE_TMP}"
 elif [[ "${TMPDIR}" != /* ]]; then
@@ -103,10 +110,17 @@ elif [[ "${TMPDIR}" != /* ]]; then
 fi
 mkdir -p "${TMPDIR}"
 TMPDIR="$(cd "${TMPDIR}" && pwd)"
+LAUNCH_TMP=""
+if [ "$dry_run" -eq 0 ]; then
+    LAUNCH_TMP="$(mktemp -d "${TMPDIR}/charm-run.XXXXXX")" || exit 2
+    TMPDIR="$LAUNCH_TMP"
+fi
 export TMPDIR
 
 cleanup_workspace_tmp() {
-    rm -rf -- "${WORKSPACE_TMP}"
+    if [ -n "$LAUNCH_TMP" ]; then
+        rm -rf -- "$LAUNCH_TMP"
+    fi
 }
 trap cleanup_workspace_tmp EXIT
 

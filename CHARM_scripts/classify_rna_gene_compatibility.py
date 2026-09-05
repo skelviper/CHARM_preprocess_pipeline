@@ -13,11 +13,11 @@ import os
 import re
 import sys
 from collections import defaultdict
+from functools import cmp_to_key
 
 import pysam
 
 
-NUMBER = re.compile(r"([0-9]+)")
 GENE_ID = re.compile(r'(?:^|;\s*)gene_id\s+"([^"]+)"')
 FEATURECOUNT_TAGS = ("XS", "XN", "XT")
 CATEGORIES = (
@@ -29,12 +29,28 @@ CATEGORIES = (
 )
 
 
-def natural_key(value):
-    return tuple(
-        (1, int(part), len(part)) if part.isdigit() else (0, part)
-        for part in NUMBER.split(value)
-        if part != ""
-    )
+def compare_qnames(left, right):
+    """Match samtools 1.17 strnum_cmp, including equivalent leading zeros."""
+    i = j = 0
+    while i < len(left) and j < len(right):
+        if "0" <= left[i] <= "9" and "0" <= right[j] <= "9":
+            a, b = i, j
+            while i < len(left) and "0" <= left[i] <= "9":
+                i += 1
+            while j < len(right) and "0" <= right[j] <= "9":
+                j += 1
+            x, y = int(left[a:i]), int(right[b:j])
+            if x != y:
+                return (x > y) - (x < y)
+        else:
+            if left[i] != right[j]:
+                return (left[i] > right[j]) - (left[i] < right[j])
+            i += 1
+            j += 1
+    return (i < len(left)) - (j < len(right))
+
+
+natural_key = cmp_to_key(compare_qnames)
 
 
 def load_gene_components(gtf_path):
@@ -136,12 +152,18 @@ def classify_gene_sets(r1_genes, r2_genes, components, r2_confidently_mapped):
 
 def grouped_records(handle):
     previous_key = None
-    for qname, records in itertools.groupby(handle.fetch(until_eof=True), lambda rec: rec.query_name):
-        key = natural_key(qname)
+    for key, records in itertools.groupby(
+        handle.fetch(until_eof=True), lambda rec: natural_key(rec.query_name)
+    ):
         if previous_key is not None and key < previous_key:
-            raise ValueError("BAM is not query-name sorted near {}".format(qname))
+            raise ValueError("BAM is not query-name sorted near {}".format(key.obj))
         previous_key = key
-        yield qname, list(records), key
+        # samtools can interleave distinct QNAMEs with equal numeric keys.
+        by_name = defaultdict(list)
+        for record in records:
+            by_name[record.query_name].append(record)
+        for qname in sorted(by_name):
+            yield qname, by_name[qname], (key, qname)
 
 
 def safe_code_from_qname(qname, allowed_codes):

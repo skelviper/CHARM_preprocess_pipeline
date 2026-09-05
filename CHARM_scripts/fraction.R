@@ -9,7 +9,7 @@ if (length(args)==0) {
 library(tidyverse)
 countMatrix<- read_table2(args[1])
 
-if(dim(countMatrix)[2]<2){
+if(nrow(countMatrix) == 0 || dim(countMatrix)[2]<2){
     write_tsv(x=countMatrix,path=args[2])
 } else {
     countMatrix <- countMatrix %>% mutate(overlapTimes = str_count(gene,",")+1) %>% select(gene,overlapTimes,everything())

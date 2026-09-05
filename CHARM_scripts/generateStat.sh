@@ -116,7 +116,7 @@ for split in atac ct; do
             [[ "$sample" != sample || "$safe_code" != safe_code ]] || continue
             bam="processed/${sample}/${split}/${sample}.sort.bam"
             require_file "$bam"
-            records=$(samtools flagstat "$bam" | awk 'NR == 1 { print $1; found=1 } END { if (!found) exit 1 }')
+            records=$(samtools view -c -F 2304 "$bam")
             printf '%s,%s\n' "$sample" "$records" >> "$temporary_stat/${split}.read.stat"
         done < "$manifest"
 
@@ -143,10 +143,6 @@ samtools view "$RNA_COUNT_BAM" | python "$HELPER" rna-alignment-stat \
     --contract "$INPUT_CONTRACT" \
     --work-dir "$WORK_DIR" \
     --output "$temporary_stat/rna.reads_per_cell.stat"
-[[ -s "$temporary_stat/rna.reads_per_cell.stat" ]] || {
-    printf 'empty RNA per-cell statistics: %s\n' "$RNA_COUNT_BAM" >&2
-    exit 1
-}
 
 : > "$temporary_stat/rna.dna_contam.stat"
 while IFS=$'\t' read -r sample safe_code; do

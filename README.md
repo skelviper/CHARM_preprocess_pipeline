@@ -52,7 +52,33 @@ All outputs are written under `work_dir`:
 │   ├── stat.executed.ipynb          # Executed statistics notebook
 │   ├── target_outputs.tsv           # Outputs required by the active configuration
 │   └── COMPLETE_RUN_AUDIT.tsv       # Final complete-run audit
-└── tmp/                              # Runtime temporary files; removed on launcher exit
+└── tmp/                              # Runtime temporary files; each launcher cleans its own directory
 ```
 
 `processed/` contains per-cell working files and is mainly useful for troubleshooting. Routine analysis generally uses the matrices, pairs, and fragments under `result/`, together with `qc/metadata_raw.tsv` and the summary tables under `qc/stat/`. Optional directories depend on `experiment_type` and `if_structure`.
+
+## Resuming and QC
+
+The pinned Snakemake 5.20 runtime now schedules jobs when their recorded rule
+parameters, input paths, or rule code change. This also applies to direct
+`snakemake -s CHARM.smk` invocations. Keep the run's `.snakemake/metadata/`
+directory so these comparisons remain available. A dry-run reports the work
+without deleting existing temporary files.
+
+ATAC/CT read estimates exclude secondary and supplementary alignments. The
+existing metadata conversion still reports gigabases assuming 300 bp per read
+pair. `nCount_atac` and `nCount_ct` remain 5 kb bin counts, not unique fragment
+counts.
+
+CHARM TSS QC uses the original mm10/EnsDb v79 annotation for `GRCm38`. Other
+references, including `GRCh37d5`, use the configured `refs` FASTA `.fai` and GTF
+transcripts with `gene_id`, `gene_name`, and `gene_biotype` or `gene_type`.
+Chromosome names must match the FASTA. TSS scores retain Signac's original
+`fast = FALSE` pileup, center/flank windows, and background normalization;
+position-enrichment matrices are not stored in a Seurat object.
+
+An RNA matrix with no counted UMIs retains every frozen cell column and zero
+feature rows. Fragment QC runs independently of RNA. Unmeasurable TSS scores
+are `NA` with `TSS.status.atac` or `TSS.status.ct` set to `insufficient_data`.
+Enabled 3D outputs with no common particles contain
+`#status\tinsufficient_data`; their `rmsd_*` metadata values remain `NA`.

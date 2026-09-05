@@ -9,6 +9,8 @@ import math
 import statistics
 from pathlib import Path
 
+from generate_stat_contract import read_rmsd_value
+
 
 FEATURES = ("gene", "exon")
 AUDIT_OUTPUT = "qc/COMPLETE_RUN_AUDIT.tsv"
@@ -334,6 +336,8 @@ def audit(work_dir, pipeline_dir):
                 "nCount_ct",
                 "TSS.enrichment.atac",
                 "TSS.enrichment.ct",
+                "TSS.status.atac",
+                "TSS.status.ct",
             }
         )
     observed_columns = set(metadata[0]) if metadata else set()
@@ -363,7 +367,11 @@ def audit(work_dir, pipeline_dir):
             )
         )
     text_columns = {"cellname", "experiment_type", "RNA_primary_output_type"}
-    numeric_columns = sorted(required_columns - text_columns)
+    optional_numeric_columns = set()
+    if experiment_type == "charm":
+        text_columns.update({"TSS.status.atac", "TSS.status.ct"})
+        optional_numeric_columns.update({"TSS.enrichment.atac", "TSS.enrichment.ct"})
+    numeric_columns = sorted(required_columns - text_columns - optional_numeric_columns)
     c123_counts = read_pair_stat(work_dir / "qc/stat/pairs.c123.stat", cells)
     c123_inter_counts = read_pair_stat(
         work_dir / "qc/stat/inter.pairs.c123.stat", cells
@@ -376,6 +384,27 @@ def audit(work_dir, pipeline_dir):
             raise ValueError("metadata experiment or primary RNA mode mismatch")
         require_numeric(row, numeric_columns, row["cellname"])
         cell = row["cellname"]
+        for split in ("atac", "ct") if experiment_type == "charm" else ():
+            column = "TSS.enrichment." + split
+            status = row["TSS.status." + split]
+            if status == "ok":
+                require_numeric(row, [column], cell)
+            elif status != "insufficient_data" or row[column] != "NA":
+                raise ValueError("invalid TSS status/value for {} {}".format(cell, split))
+        if config["if_structure"]:
+            for resolution in ("20k", "50k", "200k", "1m"):
+                path = work_dir / "result/3d_info" / cell / (
+                    "{}.{}.align.rms.info".format(cell, resolution)
+                )
+                expected = read_rmsd_value(path)
+                column = "rmsd_" + resolution
+                if expected is None:
+                    if row.get(column) != "NA":
+                        raise ValueError("missing insufficient-data RMSD for {}".format(cell))
+                else:
+                    require_numeric(row, [column], cell)
+                    if not math.isclose(float(row[column]), expected, rel_tol=1e-8, abs_tol=1e-8):
+                        raise ValueError("metadata/RMSD mismatch for {}".format(cell))
         if int(float(row["pairs_clean3"])) != c123_counts[cell]:
             raise ValueError("metadata/c123 count mismatch: {}".format(cell))
         if int(float(row["inter_pairs_clean3"])) != c123_inter_counts[cell]:

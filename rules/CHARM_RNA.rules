@@ -216,6 +216,7 @@ rule count:
         bamIn="processed/RNA_all/bamToCount/{rna_output_type}/star.Aligned.sortedByCoord.out.{genome}.bam",
         geneAnnotations=config["refs"][config["ref_genome"]]["annotations"],
         inputContract=INPUT_CONTRACT_PATH,
+        renamer=os.path.join(SCRIPTS_DIR, "rename_count_matrix.py"),
     output:
         SafeCountMatrix="result/RNA_Res/{rna_output_type}/counts.{type}.{genome}.safe.tsv",
         CountMatrix="result/RNA_Res/{rna_output_type}/counts.{type}.{genome}.tsv",
@@ -253,7 +254,7 @@ rule count:
         samtools sort "$feature_dir/star.Aligned.sortedByCoord.out.{wildcards.genome}.bam.featureCounts.bam" -o {output.CountBam}
         samtools index {output.CountBam} {output.CountBamIndex}
         umi_tools count {params.countParams} -I {output.CountBam} -S {output.SafeCountMatrix}
-        python {SCRIPTS_DIR}/rename_count_matrix.py --input {output.SafeCountMatrix} \
+        python {input.renamer} --input {output.SafeCountMatrix} \
             --contract {input.inputContract} --output {output.CountMatrix} \
             --receipt {output.CellContract}
         """
@@ -262,10 +263,11 @@ rule count:
 rule convertCountFormat:
     input:
         countMatrix=rules.count.output.CountMatrix,
+        converter=os.path.join(SCRIPTS_DIR, "fraction.R"),
     output:
         convertedCountMatrix="result/RNA_Res/{rna_output_type}/counts.{type}.{genome}.format.tsv",
     shell: """
-        Rscript {SCRIPTS_DIR}/fraction.R {input.countMatrix} {output.convertedCountMatrix}
+        Rscript {input.converter} {input.countMatrix} {output.convertedCountMatrix}
         """
 
 

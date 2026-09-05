@@ -62,6 +62,9 @@ def align(argv):
         for common_locus in common_loci:
             common_data[-1].append(input_structure[common_locus])
     sys.stderr.write("[M::" + __name__ + "] found " + str(num_loci) + " common particles\n")
+    if num_loci == 0:
+        sys.stderr.write("#status\tinsufficient_data\n")
+        return 0
         
     # subtract centroid
     common_data = np.array(common_data)
@@ -163,4 +166,4 @@ def align(argv):
 
 
 if __name__ == "__main__":
-    align(sys.argv)
+    sys.exit(align(sys.argv))
