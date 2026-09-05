@@ -78,9 +78,11 @@ rule star_mapping:
     threads: config["resources"]["star_cpu_threads"]
     resources:
         star_slots=1
+    params:
+        align_ends_type=RNA_ALIGN_ENDS_TYPE,
     shell: """
         ulimit -n 86400
-        STAR --runThreadN {threads} \
+        STAR --runThreadN {threads} --alignEndsType {params.align_ends_type} \
         --genomeDir {input.starIndex} \
         --readFilesIn {input.fastqIn} \
         --outFileNamePrefix processed/RNA_all/starOut/star. \
@@ -101,10 +103,12 @@ rule star_mapping_r2_validator:
     threads: config["resources"]["star_cpu_threads"]
     resources:
         star_slots=1
+    params:
+        align_ends_type=RNA_ALIGN_ENDS_TYPE,
     shell: """
         mkdir -p tmp/rna_gene_compatibility qc/stat
         ulimit -n 86400
-        STAR --runThreadN {threads} \
+        STAR --runThreadN {threads} --alignEndsType {params.align_ends_type} \
         --genomeDir {input.starIndex} \
         --readFilesIn {input.fastqIn} \
         --outFileNamePrefix tmp/rna_gene_compatibility/r2.star. \

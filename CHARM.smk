@@ -122,6 +122,15 @@ if IS_CHARM:
                 )
             )
 
+RNA_ALIGN_ENDS_TYPE = str(config.get("rna_align_ends_type", "Local")).strip()
+if RNA_ALIGN_ENDS_TYPE not in {"Local", "EndToEnd"}:
+    raise ValueError(
+        "rna_align_ends_type must be 'Local' or 'EndToEnd', observed {!r}".format(
+            config.get("rna_align_ends_type")
+        )
+    )
+config["rna_align_ends_type"] = RNA_ALIGN_ENDS_TYPE
+
 RNA_OUTPUT_TYPE_CHOICES = (
     "r1_all",
     "r1_compatible",

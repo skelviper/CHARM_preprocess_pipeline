@@ -57,6 +57,30 @@ All outputs are written under `work_dir`:
 
 `processed/` contains per-cell working files and is mainly useful for troubleshooting. Routine analysis generally uses the matrices, pairs, and fragments under `result/`, together with `qc/metadata_raw.tsv` and the summary tables under `qc/stat/`. Optional directories depend on `experiment_type` and `if_structure`.
 
+## RNA Alignment
+
+`rna_align_ends_type` selects STAR `Local` (the default) or `EndToEnd` for
+both RNA mates. To require alignments without soft clipping and count only
+gene-compatible R1/R2 molecules, use:
+
+```yaml
+rna_align_ends_type: EndToEnd
+rna_output_types:
+  - r1r2_concordant
+rna_primary_output_type: r1r2_concordant
+```
+
+R1 and R2 are mapped independently; the existing gene-locus compatibility
+filter selects concordant R1 reads for UMI counting. EndToEnd applies after
+the existing UMI extraction, adapter cleaning, and R2 poly(T) trimming.
+The alignment setting also works with `r1_all` and `r1_compatible`, and all
+three matrix modes can still be emitted together. Concordance alone does
+not exclude soft-clipped alignments when `Local` is selected.
+
+Changing this setting schedules both STAR mappings and their dependent RNA
+outputs again. Use a separate work directory to retain both Local and
+EndToEnd results for comparison.
+
 ## Resuming and QC
 
 The pinned Snakemake 5.20 runtime now schedules jobs when their recorded rule

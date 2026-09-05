@@ -9,6 +9,10 @@ experiment_type: charm  # charm or hires
 work_dir: ../workspace
 format: illumina  # illumina or bgi
 
+# STAR alignment ends for both RNA mates: Local or EndToEnd.
+# EndToEnd disallows soft clipping after UMI/adapter/poly(T) preparation.
+rna_align_ends_type: Local
+
 # RNA matrix modes. Select one or more of: r1_all, r1_compatible,
 # r1r2_concordant. The default emits all three matrices.
 # r1_all ignores R2. r1_compatible removes R1 qnames when R2 maps uniquely at
