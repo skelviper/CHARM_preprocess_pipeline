@@ -48,7 +48,6 @@ dependencies:
   - crc32c=2.2.post0=py37h5e8e339_1
   - cryptography=38.0.4=py37h9ce1e76_0
   - curl=7.87.0=h5eee18b_0
-  - cutadapt=2.10=py37hf01694f_1
   - cycler=0.11.0=pyhd3eb1b0_0
   - cython=0.29.32=py37h6a678d5_0
   - dask=2021.10.0=pyhd3eb1b0_0
@@ -424,6 +423,7 @@ dependencies:
   - zlib=1.2.13=h166bdaf_4
   - zstd=1.5.2=ha4553b6_0
   - pip:
+      - cutadapt==4.6
       - bioframe==0.4.1
       - charset-normalizer==3.1.0
       - cooltools==0.5.1

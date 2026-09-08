@@ -58,8 +58,8 @@ sex_no_xy_fallback: XX
 softwares:
   # Managed as an independent Part 3 source tree, not vendored in this pipeline.
   CHARMtools: ../CHARMtools
-  # Existing validated Cutadapt 4.6 executable; no per-rule Conda environment
-  # is created. The main workflow continues to run in the charm environment.
+  # Shared Cutadapt 4.6 executable for RNA/DNA splitting, ATAC/CT splitting,
+  # adapter cleaning, and R2 poly(T) trimming. No per-rule env is created.
   cutadapt_4_6: /mnt/ssd/zliu/miniforge3/envs/charm_rerun/bin/cutadapt
   # Existing R/Jupyter runtime containing Signac, Seurat, mm10, and IRkernel.
   # This executable is reused directly; the workflow never creates an env.

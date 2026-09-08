@@ -14,6 +14,7 @@ rule multiSplit:
         ct_adapter=config["split"]["ct"],
         atac_adapter=config["split"]["atac"],
         cutadapt_threads=config["resources"]["cutadapt_cpu_threads"],
+        cutadapt46=CUTADAPT_4_6,
         seq_format=config.get("format", "illumina")
     shell:"""
         set -euo pipefail
@@ -23,6 +24,7 @@ rule multiSplit:
           --split ct '{params.ct_adapter}' {output.ct_R1} {output.ct_R2} \
           --split atac '{params.atac_adapter}' {output.atac_R1} {output.atac_R2} \
           --threads-per-split {params.cutadapt_threads} \
+          --cutadapt {params.cutadapt46:q} \
           --decompress-threads 1 \
           --seq-format {params.seq_format}
         """
@@ -40,17 +42,18 @@ rule split:
     threads: config["resources"]["cutadapt_cpu_threads"]
     params:
         adapter=r"XGGTTGAGGTAGTATTGCGCAATG;o=20",
+        cutadapt46=CUTADAPT_4_6,
         seq_format=config.get("format", "illumina")
     shell:"""
         if [ "{params.seq_format}" = "bgi" ]; then
-            cutadapt -G '{params.adapter}' -j {threads} --untrimmed-output {output.DNA_R1}.tmp --untrimmed-paired-output {output.DNA_R2}.tmp -o {output.RNA_R1}.tmp -p {output.RNA_R2}.tmp {input.read1} {input.read2} && \
+            {params.cutadapt46:q} -G '{params.adapter}' -j {threads} --untrimmed-output {output.DNA_R1}.tmp --untrimmed-paired-output {output.DNA_R2}.tmp -o {output.RNA_R1}.tmp -p {output.RNA_R2}.tmp {input.read1} {input.read2} && \
             awk '{{if(NR%4==1) gsub("/1"," 1",$1); print $0}}' {output.RNA_R1}.tmp | gzip > {output.RNA_R1} && \
             awk '{{if(NR%4==1) gsub("/2"," 2",$1); print $0}}' {output.RNA_R2}.tmp | gzip > {output.RNA_R2} && \
             awk '{{if(NR%4==1) gsub("/1"," 1",$1); print $0}}' {output.DNA_R1}.tmp | gzip > {output.DNA_R1} && \
             awk '{{if(NR%4==1) gsub("/2"," 2",$1); print $0}}' {output.DNA_R2}.tmp | gzip > {output.DNA_R2} && \
             rm {output.RNA_R1}.tmp {output.RNA_R2}.tmp {output.DNA_R1}.tmp {output.DNA_R2}.tmp
         else
-            cutadapt -G '{params.adapter}' -j {threads} --untrimmed-output {output.DNA_R1} --untrimmed-paired-output {output.DNA_R2} -o {output.RNA_R1} -p {output.RNA_R2} {input.read1} {input.read2}
+            {params.cutadapt46:q} -G '{params.adapter}' -j {threads} --untrimmed-output {output.DNA_R1} --untrimmed-paired-output {output.DNA_R2} -o {output.RNA_R1} -p {output.RNA_R2} {input.read1} {input.read2}
         fi
         """
 
@@ -64,10 +67,11 @@ rule cutRound2_DNA:
         trimmed_DNA_R2="processed/{sample}/DNA/{sample}.dna.clean.R2.fq.gz",
     threads: config["resources"]["cutadapt_cpu_threads"]
     params:
-        adapters=lambda wildcards: " ".join([f"-G '{config['split'][key]}'" for key in config["split"]])
+        adapters=lambda wildcards: " ".join([f"-G '{config['split'][key]}'" for key in config["split"]]),
+        cutadapt46=CUTADAPT_4_6,
     shell:"""
 
-        cutadapt {params.adapters} -j {threads} -o {output.trimmed_DNA_R1} -p {output.trimmed_DNA_R2} {input.DNA_R1} {input.DNA_R2}
+        {params.cutadapt46:q} {params.adapters} -j {threads} -o {output.trimmed_DNA_R1} -p {output.trimmed_DNA_R2} {input.DNA_R1} {input.DNA_R2}
 
         """
 
@@ -81,7 +85,8 @@ rule cutRound2_RNA:
         RNA_R2="processed/{sample}/RNA/{sample}.rna.clean.R2.fq.gz",
     threads: config["resources"]["cutadapt_cpu_threads"]
     params:
-        adapter=r"XNNNNNNNNTTTTTTTTTTTTTTT;o=18"
+        adapter=r"XNNNNNNNNTTTTTTTTTTTTTTT;o=18",
+        cutadapt46=CUTADAPT_4_6,
     shell:"""
-        cutadapt --action=none --discard-untrimmed -G '{params.adapter}' -j {threads} -o {output.RNA_R1} -p {output.RNA_R2} {input.RNA_R1} {input.RNA_R2}
+        {params.cutadapt46:q} --action=none --discard-untrimmed -G '{params.adapter}' -j {threads} -o {output.RNA_R1} -p {output.RNA_R2} {input.RNA_R1} {input.RNA_R2}
         """

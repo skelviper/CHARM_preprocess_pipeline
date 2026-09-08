@@ -452,7 +452,7 @@ def main():
                 ready_r1 = os.path.join(split_dir, "ready.R1.fq.gz")
                 ready_r2 = os.path.join(split_dir, "ready.R2.fq.gz")
 
-            # Cutadapt 2.10 multiprocessing can reopen named FIFOs reliably;
+            # Cutadapt multiprocessing can reopen named FIFOs reliably;
             # inherited /dev/fd paths hang when more than one core is used.
             input_r1 = os.path.join(split_dir, "input.R1.fastq")
             input_r2 = os.path.join(split_dir, "input.R2.fastq")

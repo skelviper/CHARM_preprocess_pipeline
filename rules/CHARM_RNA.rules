@@ -44,9 +44,9 @@ rule RNAclean:
     threads: config["resources"]["cutadapt_cpu_threads"]
     params:
         adapter=r"AAAAAAAAAAAAAANNNNNNNNCATTGCGCAATACTACCTCAACCCTGTCTCTTATA",
+        cutadapt46=CUTADAPT_4_6,
     shell: """
-        # Preserve the production Cutadapt 2.10 R1 cleaning contract.
-        cutadapt -a {params.adapter} {input.rnaAll} -j {threads} --minimum-length 1 -o {output.rnaAllclean}
+        {params.cutadapt46:q} -a {params.adapter} {input.rnaAll} -j {threads} --minimum-length 1 -o {output.rnaAllclean}
         """
 
 

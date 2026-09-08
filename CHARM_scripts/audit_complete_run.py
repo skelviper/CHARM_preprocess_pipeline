@@ -32,14 +32,6 @@ COMPATIBILITY_COLUMNS = {
 }
 
 
-def sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def read_matrix(path, expected_cells):
     sums = {cell: 0.0 for cell in expected_cells}
     detected = {cell: 0 for cell in expected_cells}
@@ -442,20 +434,6 @@ def audit(work_dir, pipeline_dir):
             "PASS",
             "{} rows; {} columns".format(len(metadata), len(observed_columns)),
         )
-    )
-
-    provenance_path = work_dir / "qc/provenance/source_files.sha256.tsv"
-    with provenance_path.open(newline="") as handle:
-        provenance = list(csv.DictReader(handle, delimiter="\t"))
-    mismatches = []
-    for row in provenance:
-        source = (pipeline_dir / row["path"]).resolve()
-        if not source.is_file() or sha256(source) != row["sha256"]:
-            mismatches.append(row["path"])
-    if mismatches:
-        raise ValueError("source provenance mismatch: {}".format(mismatches))
-    checks.append(
-        ("source_provenance", "PASS", "{} hashes".format(len(provenance)))
     )
 
     receipt_path = work_dir / AUDIT_OUTPUT

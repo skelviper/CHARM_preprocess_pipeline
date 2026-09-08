@@ -47,11 +47,6 @@ if not os.path.isabs(CHARMTOOLS_DIR):
     CHARMTOOLS_DIR = os.path.normpath(os.path.join(PIPELINE_DIR, CHARMTOOLS_DIR))
 CHARMTOOLS_PYTHONPATH = os.path.dirname(CHARMTOOLS_DIR)
 
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
-from source_inventory import build_source_inventory, write_source_hash_inventory
-
-
 LAUNCHER_WORK_DIR = os.environ.get("CHARM_EFFECTIVE_WORK_DIR")
 if LAUNCHER_WORK_DIR:
     if not os.path.isabs(LAUNCHER_WORK_DIR):
@@ -182,9 +177,9 @@ for key, expected in expected_rna_compatibility_contract.items():
         )
 
 CUTADAPT_4_6 = config.get("softwares", {}).get("cutadapt_4_6", "")
-if RNA_COMPATIBILITY_ENABLED and not CUTADAPT_4_6:
+if not CUTADAPT_4_6:
     raise ValueError(
-        "softwares.cutadapt_4_6 is required for filtered RNA output types"
+        "softwares.cutadapt_4_6 is required for all adapter processing"
     )
 
 METADATA_JUPYTER = config.get("softwares", {}).get("metadata_jupyter", "")
@@ -355,7 +350,6 @@ METADATA_OUTPUTS = ["qc/stat.executed.ipynb", "qc/metadata_raw.tsv"]
 AUDIT_OUTPUTS = ["qc/COMPLETE_RUN_AUDIT.tsv"]
 PROVENANCE_OUTPUTS = [
     "qc/provenance/effective_config.json",
-    "qc/provenance/source_files.sha256.tsv",
 ]
 TARGET_CONTRACT_OUTPUTS = ["qc/target_outputs.tsv"]
 QC_BASE_OUTPUTS = _unique_paths(
@@ -409,11 +403,6 @@ TARGET_CONTRACT_TEXT = _render_target_contract()
 TARGET_CONTRACT_SHA256 = hashlib.sha256(
     TARGET_CONTRACT_TEXT.encode("utf-8")
 ).hexdigest()
-
-WORKFLOW_SOURCE_INVENTORY = build_source_inventory(
-    PIPELINE_DIR, CONFIG_SOURCE_FILES, CHARMTOOLS_DIR
-)
-WORKFLOW_SOURCE_FILES = [path for _, path in WORKFLOW_SOURCE_INVENTORY]
 
 QC_UPSTREAM_OUTPUTS = _unique_paths(
     CORE_TARGET_OUTPUTS + STRUCTURE3D_TARGET_OUTPUTS
@@ -583,19 +572,15 @@ rule audit_complete_run:
 
 rule pipeline_provenance:
     input:
-        sources = WORKFLOW_SOURCE_FILES,
+        config_sources = CONFIG_SOURCE_FILES,
     output:
         effective_config = PROVENANCE_OUTPUTS[0],
-        source_hashes = PROVENANCE_OUTPUTS[1],
     params:
         effective_config_sha256 = EFFECTIVE_CONFIG_SHA256,
     run:
         os.makedirs(os.path.dirname(str(output.effective_config)), exist_ok=True)
         with open(str(output.effective_config), "w") as handle:
             handle.write(EFFECTIVE_CONFIG_TEXT)
-        write_source_hash_inventory(
-            WORKFLOW_SOURCE_INVENTORY, PIPELINE_DIR, str(output.source_hashes)
-        )
 
 
 rule target_contract:

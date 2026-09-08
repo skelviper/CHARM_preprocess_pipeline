@@ -48,7 +48,7 @@ All outputs are written under `work_dir`:
 │   ├── stat/                        # Raw summary tables
 │   ├── logs/                        # Workflow and rule logs
 │   ├── input_contract/              # Input list used by the run
-│   ├── provenance/                  # Effective configuration and source record
+│   ├── provenance/                  # Effective configuration
 │   ├── stat.executed.ipynb          # Executed statistics notebook
 │   ├── target_outputs.tsv           # Outputs required by the active configuration
 │   └── COMPLETE_RUN_AUDIT.tsv       # Final complete-run audit
@@ -56,6 +56,17 @@ All outputs are written under `work_dir`:
 ```
 
 `processed/` contains per-cell working files and is mainly useful for troubleshooting. Routine analysis generally uses the matrices, pairs, and fragments under `result/`, together with `qc/metadata_raw.tsv` and the summary tables under `qc/stat/`. Optional directories depend on `experiment_type` and `if_structure`.
+
+## Cutadapt
+
+All adapter-processing rules use the same Cutadapt 4.6 executable configured
+by `softwares.cutadapt_4_6`: RNA/DNA splitting, ATAC/CT fanout, RNA/DNA adapter
+cleaning, and R2 poly(T) trimming. Set this to the absolute path of your
+Cutadapt 4.6 executable. The environment specification installs Cutadapt 4.6;
+an existing executable in another environment can also be reused directly.
+The adapter sequences and trimming options remain unchanged. Cutadapt 4.x
+can select different adapter alignments from 2.10, so new output need not be
+identical to historical 2.10 output.
 
 ## RNA Alignment
 
@@ -82,6 +93,13 @@ outputs again. Use a separate work directory to retain both Local and
 EndToEnd results for comparison.
 
 ## Resuming and QC
+
+The workflow records its effective configuration in
+`qc/provenance/effective_config.json`. CHARMtools can be an ordinary checkout
+or package directory; upstream manifest/provenance files are not required.
+There is no fixed source-file inventory, source SHA256 generation, or source
+hash comparison in the completion audit. Older run receipts can remain in
+their work directories without becoming requirements for new runs.
 
 The pinned Snakemake 5.20 runtime now schedules jobs when their recorded rule
 parameters, input paths, or rule code change. This also applies to direct
